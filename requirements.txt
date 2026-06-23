@@ -1,0 +1,17 @@
+# Demo-only minimum:
+numpy
+pillow
+
+# Full training / evaluation:
+opencv-python
+tqdm
+matplotlib
+tensorboard
+scipy
+scikit-learn
+pandas
+monai
+
+# Install PyTorch/torchvision separately for your CUDA version.
+# Example for CUDA 12.1:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
