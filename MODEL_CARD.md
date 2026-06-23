@@ -1,15 +1,15 @@
-# GeoFormerX Model Card
+# GeoFormer Model Card
 
 ## Model Summary
 
-GeoFormerX is a SAM-adapted RGB-D pavement defect segmentation model. It predicts
+GeoFormer is a SAM-adapted RGB-D pavement defect segmentation model. It predicts
 seven foreground road-surface classes plus background from paired RGB and
 3D/depth inputs.
 
 ## Intended Use
 
 - Research on pavement defect segmentation and RGB-D road-surface parsing.
-- Reproducibility checks for the associated GeoFormerX training and evaluation
+- Reproducibility checks for the associated GeoFormer training and evaluation
   recipe.
 - Controlled experiments on geometry-gated fusion, task-aware MoE routing, and
   lightweight class-group refinement.
@@ -33,7 +33,7 @@ palette.
 
 ## Outputs
 
-GeoFormerX outputs foreground logits for:
+GeoFormer outputs foreground logits for:
 
 1. Crack
 2. Pothole
@@ -54,7 +54,7 @@ synthetic RGB-D example dataset for smoke testing only.
 
 Large trained weights and SAM checkpoints are intentionally excluded from the
 repository. Use `scripts/download_sam_checkpoint.py` to download the base SAM
-checkpoint, and store trained GeoFormerX weights under `runs/` or
+checkpoint, and store trained GeoFormer weights under `runs/` or
 `checkpoints/`.
 
 ## Limitations
@@ -68,5 +68,5 @@ checkpoint, and store trained GeoFormerX weights under `runs/` or
 
 ## License
 
-GeoFormerX release code is distributed under the MIT License, except for vendored
+GeoFormer release code is distributed under the MIT License, except for vendored
 or derived third-party components listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

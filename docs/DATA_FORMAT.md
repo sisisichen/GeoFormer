@@ -1,6 +1,6 @@
 # Data Format
 
-GeoFormerX expects paired 2D RGB images, RGB label masks, and 3D/depth images.
+GeoFormer expects paired 2D RGB images, RGB label masks, and 3D/depth images.
 
 ```text
 data/pavement_rgbd/

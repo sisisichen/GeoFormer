@@ -1,14 +1,14 @@
-# GeoFormerX
+# GeoFormer
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Model Card](https://img.shields.io/badge/model-card-informational)](MODEL_CARD.md)
 [![Citation](https://img.shields.io/badge/citation-CFF-lightgrey)](CITATION.cff)
 
-Official PyTorch release for **GeoFormerX: SAM-based RGB-D pavement defect
+Official PyTorch release for **GeoFormer: SAM-based RGB-D pavement defect
 segmentation with geometry-gated fusion and task-aware expert routing**.
 
-GeoFormerX targets multi-class road-surface parsing from paired RGB and 3D/depth
+GeoFormer targets multi-class road-surface parsing from paired RGB and 3D/depth
 inputs. It adapts Segment Anything for pavement inspection by combining
 geometry-aware 2D/3D fusion, task-aware Mixture-of-Experts (MoE) adapters, and
 specialized lightweight refinement heads for thin linear defects and local
@@ -29,17 +29,53 @@ surface damage.
 - **Checkpoint-free smoke test:** validates data loading, palette conversion,
   prediction export, overlays, and metrics without GPU or SAM weights.
 
+## Paper Figures
+
+The main figures from the manuscript are included in `assets/figures/`.
+
+**Overall Architecture**
+
+<div align="center"><img src="assets/figures/fig1_overall_architecture.png" alt="Overall architecture of GeoFormer" width="100%"></div>
+
+**Conditional Adaptation Modules**
+
+<div align="center"><img src="assets/figures/fig2a_geometry_gated_fusion.png" alt="Geometry-gated RGB-D fusion" width="88%"></div>
+
+<div align="center"><img src="assets/figures/fig2b_style_routed_moe_adapter.png" alt="Style-routed MoE adapter" width="78%"></div>
+
+**Experimental Protocol**
+
+<div align="center"><img src="assets/figures/fig3_experimental_protocol.png" alt="In-distribution, OOD, and few-shot protocol" width="90%"></div>
+
+**Quantitative Results**
+
+<div align="center"><img src="assets/figures/fig4_id_comparison.png" alt="In-distribution comparison and accuracy-speed trade-off" width="78%"></div>
+
+<div align="center"><img src="assets/figures/fig5_ood_fewshot_curves.png" alt="OOD zero-shot and few-shot adaptation curves" width="84%"></div>
+
+<div align="center"><img src="assets/figures/fig6_ablation_heatmap.png" alt="Component ablation heatmap" width="96%"></div>
+
+<div align="center"><img src="assets/figures/fig7_scenario_difference.png" alt="Scenario-level difference against SMP baseline" width="88%"></div>
+
+<div align="center"><img src="assets/figures/fig8_metric_profile.png" alt="GeoFormer metric profile across ID and OOD settings" width="82%"></div>
+
+**Qualitative Comparison**
+
+<div align="center"><img src="assets/figures/fig9_qualitative_comparison.png" alt="Qualitative comparison under ID, OOD, few-shot, and challenging-case settings" width="100%"></div>
+
 ## Release Contents
 
 ```text
-GeoFormerX-release/
+GeoFormer/
+  assets/
+    figures/              manuscript figures
   data/                   RGB-D dataset reader and routing taxonomy
   docs/
     DATA_FORMAT.md        expected RGB, depth, and mask layout
   examples/
     pavement_rgbd_small/  tiny synthetic RGB-D smoke-test dataset
   model/
-    geoformerx.py         GeoFormerX model, fusion, MoE, and refinement heads
+    geoformerx.py         GeoFormer model, fusion, MoE, and refinement heads
   scripts/
     create_example_dataset.py
     demo.py
@@ -62,8 +98,8 @@ GeoFormerX-release/
 Create and activate an environment:
 
 ```bash
-git clone https://github.com/sisisichen/GeoFormerX-release.git
-cd GeoFormerX-release
+git clone https://github.com/sisisichen/GeoFormer.git
+cd GeoFormer
 
 python -m venv .venv
 ```
@@ -94,7 +130,7 @@ For the demo-only path, only `numpy` and `pillow` are required.
 
 ## Data Layout
 
-GeoFormerX expects paired RGB images, RGB palette masks, and depth/3D images.
+GeoFormer expects paired RGB images, RGB palette masks, and depth/3D images.
 The default structure is:
 
 ```text
@@ -158,7 +194,7 @@ Prepare the RGB-D pavement dataset, then run the staged training wrapper:
 python train.py \
   --data_path data/pavement_rgbd \
   --checkpoint checkpoints/sam \
-  --work_dir runs/geoformerx \
+  --work_dir runs/geoformer \
   --model_type vit_b \
   --device cuda:0
 ```
@@ -177,9 +213,9 @@ Run tiled inference and metric export:
 python evaluate.py \
   --data_path data/pavement_rgbd \
   --checkpoint checkpoints/sam \
-  --ckpt runs/geoformerx/model_final.pth \
+  --ckpt runs/geoformer/model_final.pth \
   --split test \
-  --out_dir runs/geoformerx/eval_test \
+  --out_dir runs/geoformer/eval_test \
   --model_type vit_b \
   --device cuda:0
 ```
@@ -210,7 +246,7 @@ intentionally excluded. Keep them under `checkpoints/`, `data/pavement_rgbd/`,
 `datasets/`, or `runs/`; those paths are ignored by Git.
 
 The `segment_anything/` directory is a minimal vendored subset of Meta AI's
-Segment Anything implementation required by GeoFormerX. See
+Segment Anything implementation required by GeoFormer. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Citation
@@ -219,9 +255,9 @@ If you use this repository, please cite the associated paper or repository
 metadata:
 
 ```bibtex
-@software{geoformerx_release_2026,
-  title = {GeoFormerX: RGB-D SAM Adaptation for Pavement Defect Segmentation},
-  author = {{GeoFormerX Contributors}},
+@software{geoformer_2026,
+  title = {GeoFormer: RGB-D SAM Adaptation for Pavement Defect Segmentation},
+  author = {{GeoFormer Contributors}},
   year = {2026},
   version = {1.0.0}
 }
