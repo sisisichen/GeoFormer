@@ -29,9 +29,9 @@ surface damage.
 - **Checkpoint-free smoke test:** validates data loading, palette conversion,
   prediction export, overlays, and metrics without GPU or SAM weights.
 
-## Paper Figures
+## Key Figures
 
-The main figures from the manuscript are included in `assets/figures/`.
+Selected manuscript figures are included in `assets/figures/`.
 
 **Overall Architecture**
 
@@ -43,21 +43,9 @@ The main figures from the manuscript are included in `assets/figures/`.
 
 <div align="center"><img src="assets/figures/fig2b_style_routed_moe_adapter.png" alt="Style-routed MoE adapter" width="78%"></div>
 
-**Experimental Protocol**
-
-<div align="center"><img src="assets/figures/fig3_experimental_protocol.png" alt="In-distribution, OOD, and few-shot protocol" width="90%"></div>
-
-**Quantitative Results**
+**Main Quantitative Result**
 
 <div align="center"><img src="assets/figures/fig4_id_comparison.png" alt="In-distribution comparison and accuracy-speed trade-off" width="78%"></div>
-
-<div align="center"><img src="assets/figures/fig5_ood_fewshot_curves.png" alt="OOD zero-shot and few-shot adaptation curves" width="84%"></div>
-
-<div align="center"><img src="assets/figures/fig6_ablation_heatmap.png" alt="Component ablation heatmap" width="96%"></div>
-
-<div align="center"><img src="assets/figures/fig7_scenario_difference.png" alt="Scenario-level difference against SMP baseline" width="88%"></div>
-
-<div align="center"><img src="assets/figures/fig8_metric_profile.png" alt="GeoFormer metric profile across ID and OOD settings" width="82%"></div>
 
 **Qualitative Comparison**
 
@@ -68,7 +56,7 @@ The main figures from the manuscript are included in `assets/figures/`.
 ```text
 GeoFormer/
   assets/
-    figures/              manuscript figures
+    figures/              selected manuscript figures
   data/                   RGB-D dataset reader and routing taxonomy
   docs/
     DATA_FORMAT.md        expected RGB, depth, and mask layout
