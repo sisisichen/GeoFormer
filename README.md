@@ -40,16 +40,23 @@ overlap-aware reconstruction.
   <sub><a href="assets/figures/fig1_overall_architecture.png">Open the full-resolution figure</a></sub>
 </p>
 
-| Component | Canonical setting |
-| --- | --- |
-| Input | Grayscale intensity `I` + range-coded raster `Q` |
-| Backbone | SAM ViT-B; original image and prompt encoders frozen |
-| Fusion | G8 global descriptor + spatial modulation |
-| Adapter | S0 in blocks 0-11; `768 -> 42 -> 42 -> 768` |
-| Decoder | Seven foreground logits + fixed zero background |
-| Tiling | `256 x 256`, stride `128`, three tiles per `512 x 256` image |
-| Prompt | Fixed full-tile box `[0, 0, 256, 256]` |
-| Parameters | 92,073,368 total; 5,394,508 trainable |
+<div align="center">
+<table align="center">
+  <thead>
+    <tr><th align="center">Component</th><th align="center">Canonical setting</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">Input</td><td align="center">Grayscale intensity <code>I</code> + range-coded raster <code>Q</code></td></tr>
+    <tr><td align="center">Backbone</td><td align="center">SAM ViT-B; original image and prompt encoders frozen</td></tr>
+    <tr><td align="center">Fusion</td><td align="center">G8 global descriptor + spatial modulation</td></tr>
+    <tr><td align="center">Adapter</td><td align="center">S0 in blocks 0-11; <code>768 -&gt; 42 -&gt; 42 -&gt; 768</code></td></tr>
+    <tr><td align="center">Decoder</td><td align="center">Seven foreground logits + fixed zero background</td></tr>
+    <tr><td align="center">Tiling</td><td align="center"><code>256 x 256</code>, stride <code>128</code>, three tiles per <code>512 x 256</code> image</td></tr>
+    <tr><td align="center">Prompt</td><td align="center">Fixed full-tile box <code>[0, 0, 256, 256]</code></td></tr>
+    <tr><td align="center">Parameters</td><td align="center">92,073,368 total; 5,394,508 trainable</td></tr>
+  </tbody>
+</table>
+</div>
 
 ### G8 fusion and S0 adaptation
 
@@ -88,11 +95,23 @@ and `adaptation_pool`, each with 1,000 images.
   <sub><a href="assets/figures/fig4_architecture_screening.png">Open the full-resolution figure</a></sub>
 </p>
 
-| Stage | Selected | Alternatives | Source-val foreground macro Dice |
-| --- | --- | --- | ---: |
-| Gate | G8 | G4, G0 | 0.7524 |
-| Decoder | D0 | D1 | 0.7524 |
-| Adapter | S0 | M0, A0 | 0.7486 +/- 0.0019 |
+<div align="center">
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Stage</th>
+      <th align="center">Selected</th>
+      <th align="center">Alternatives</th>
+      <th align="center">Source-val foreground macro Dice</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">Gate</td><td align="center">G8</td><td align="center">G4, G0</td><td align="center">0.7524</td></tr>
+    <tr><td align="center">Decoder</td><td align="center">D0</td><td align="center">D1</td><td align="center">0.7524</td></tr>
+    <tr><td align="center">Adapter</td><td align="center">S0</td><td align="center">M0, A0</td><td align="center">0.7486 +/- 0.0019</td></tr>
+  </tbody>
+</table>
+</div>
 
 <p align="center">
   <a href="assets/figures/fig5_per_class_source_val.png"><img src="assets/figures/fig5_per_class_source_val.png" alt="Two-seed per-class source-validation diagnostics" width="100%"></a><br>
@@ -112,12 +131,27 @@ not locked-test comparisons.
 The primary paper comparison uses seed 2028 and the same 1,000 frozen test IDs
 for all four methods.
 
-| Method | Input | FG mDice | mIoU | Macro F1 | Boundary-F1 | Seam Dice |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| **GeoFormerX** | I + Q | **0.7605** | **0.6910** | **0.7889** | **0.7154** | **0.7659** |
-| FrozenSAM matched | I only | 0.6920 | 0.6464 | 0.7289 | 0.6273 | 0.6927 |
-| SegFormer-B2 | I only | 0.7104 | 0.6598 | 0.7449 | 0.6403 | 0.7354 |
-| CMX | I + Q | 0.7763 | 0.7107 | 0.8027 | 0.7181 | 0.7743 |
+<div align="center">
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Method</th>
+      <th align="center">Input</th>
+      <th align="center">FG mDice</th>
+      <th align="center">mIoU</th>
+      <th align="center">Macro F1</th>
+      <th align="center">Boundary-F1</th>
+      <th align="center">Seam Dice</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td align="center"><strong>GeoFormerX</strong></td><td align="center">I + Q</td><td align="center"><strong>0.7605</strong></td><td align="center"><strong>0.6910</strong></td><td align="center"><strong>0.7889</strong></td><td align="center"><strong>0.7154</strong></td><td align="center"><strong>0.7659</strong></td></tr>
+    <tr><td align="center">FrozenSAM matched</td><td align="center">I only</td><td align="center">0.6920</td><td align="center">0.6464</td><td align="center">0.7289</td><td align="center">0.6273</td><td align="center">0.6927</td></tr>
+    <tr><td align="center">SegFormer-B2</td><td align="center">I only</td><td align="center">0.7104</td><td align="center">0.6598</td><td align="center">0.7449</td><td align="center">0.6403</td><td align="center">0.7354</td></tr>
+    <tr><td align="center">CMX</td><td align="center">I + Q</td><td align="center">0.7763</td><td align="center">0.7107</td><td align="center">0.8027</td><td align="center">0.7181</td><td align="center">0.7743</td></tr>
+  </tbody>
+</table>
+</div>
 
 Paired image-level inference found practically meaningful improvements over
 matched intensity-only FrozenSAM (`+0.0685`, Holm-adjusted `p = 0.0003`) and
@@ -277,16 +311,28 @@ horizontal-flip TTA, and a final eight-class argmax.
 
 ## Class palette
 
-| ID | Class | Functional group | RGB |
-| ---: | --- | --- | --- |
-| 0 | Background | Background | `255, 255, 255` |
-| 1 | Crack | Active distress | `255, 0, 0` |
-| 2 | Pothole | Active distress | `0, 255, 0` |
-| 3 | Sealed Crack | Repair or treatment | `140, 40, 225` |
-| 4 | Patch | Repair or treatment | `0, 190, 255` |
-| 5 | Road Marking | Surface object or feature | `0, 0, 255` |
-| 6 | Expansion Joint | Structural feature | `140, 70, 0` |
-| 7 | Manhole Cover | Surface object or asset | `255, 100, 50` |
+<div align="center">
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">ID</th>
+      <th align="center">Class</th>
+      <th align="center">Functional group</th>
+      <th align="center">RGB</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">0</td><td align="center">Background</td><td align="center">Background</td><td align="center"><code>255, 255, 255</code></td></tr>
+    <tr><td align="center">1</td><td align="center">Crack</td><td align="center">Active distress</td><td align="center"><code>255, 0, 0</code></td></tr>
+    <tr><td align="center">2</td><td align="center">Pothole</td><td align="center">Active distress</td><td align="center"><code>0, 255, 0</code></td></tr>
+    <tr><td align="center">3</td><td align="center">Sealed Crack</td><td align="center">Repair or treatment</td><td align="center"><code>140, 40, 225</code></td></tr>
+    <tr><td align="center">4</td><td align="center">Patch</td><td align="center">Repair or treatment</td><td align="center"><code>0, 190, 255</code></td></tr>
+    <tr><td align="center">5</td><td align="center">Road Marking</td><td align="center">Surface object or feature</td><td align="center"><code>0, 0, 255</code></td></tr>
+    <tr><td align="center">6</td><td align="center">Expansion Joint</td><td align="center">Structural feature</td><td align="center"><code>140, 70, 0</code></td></tr>
+    <tr><td align="center">7</td><td align="center">Manhole Cover</td><td align="center">Surface object or asset</td><td align="center"><code>255, 100, 50</code></td></tr>
+  </tbody>
+</table>
+</div>
 
 The audited color `#008C5A` maps to `IGNORE_INDEX = 255`. Any other undeclared
 mask color raises an error.
