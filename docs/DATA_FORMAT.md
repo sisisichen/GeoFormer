@@ -1,6 +1,8 @@
 # Data Format
 
-GeoFormer expects paired 2D RGB images, RGB label masks, and 3D/depth images.
+GeoFormerX expects paired grayscale-intensity images, range-coded rasters, and
+RGB semantic masks. The source dataset's historical `3Ddate` directory name is
+retained for compatibility; it does not imply calibrated metric depth.
 
 ```text
 data/pavement_rgbd/
@@ -19,7 +21,7 @@ data/pavement_rgbd/
     test/image/DL3xxxx.png
 ```
 
-The 2D-to-3D filename mapping replaces the `DL2` prefix with `DL3`. For example:
+The filename mapping replaces the `DL2` prefix with `DL3`:
 
 ```text
 train/image/DL20001.png
@@ -27,28 +29,57 @@ train/image/DL20001.png
 train/label/DL20001.bmp
 ```
 
-## Label Palette
+## Intensity modality
+
+The intensity input contains one independent information channel. Single-channel
+files are loaded directly. Three-channel files must have identical `R`, `G`, and
+`B` values; the grayscale channel is replicated only when forming SAM's
+three-channel interface.
+
+## Range-coded modality
+
+The auxiliary file is an 8-bit grayscale PNG. Its values are treated as digital
+numbers. Do not convert them to distance, height, or volume unless an independent
+calibration is available.
+
+Paired files should have the same `512 x 256` dimensions. The loader supports
+nearest-neighbor resizing for compatibility, but matching dimensions should be
+verified before a formal run.
+
+## Label palette
 
 | Class ID | Name | RGB |
-| --- | --- | --- |
-| 0 | Background | 255, 255, 255 |
-| 1 | Crack | 255, 0, 0 |
-| 2 | Pothole | 0, 255, 0 |
-| 3 | Seal | 140, 40, 225 |
-| 4 | Patch | 0, 190, 255 |
-| 5 | Marking | 0, 0, 255 |
-| 6 | Joint | 140, 70, 0 |
-| 7 | Manhole | 255, 100, 50 |
+| ---: | --- | --- |
+| 0 | Background | `255, 255, 255` |
+| 1 | Crack | `255, 0, 0` |
+| 2 | Pothole | `0, 255, 0` |
+| 3 | Sealed Crack | `140, 40, 225` |
+| 4 | Patch | `0, 190, 255` |
+| 5 | Road Marking | `0, 0, 255` |
+| 6 | Expansion Joint | `140, 70, 0` |
+| 7 | Manhole Cover | `255, 100, 50` |
 
-Unknown colors farther than the configured threshold are mapped to `IGNORE_INDEX=255`.
+The audited extra color `#008C5A` maps to `IGNORE_INDEX = 255`. Any other
+undeclared color raises an error; nearest-color guessing is not used.
 
-## Practical Checks
+## Tiling and prompting
 
-Before long training runs, verify:
+- Source image: `512 x 256`.
+- Tile size: `256 x 256`.
+- Stride: 128 pixels.
+- Tiles per source image: 3.
+- Prompt: fixed box `[0, 0, 256, 256]` for every tile.
+- Reconstruction: Hann-weighted logit averaging, then eight-class argmax.
+
+## Practical checks
+
+Before a long run:
 
 ```bash
 python scripts/demo.py
 python train.py --data_path data/pavement_rgbd --checkpoint checkpoints/sam --dry_run
+python evaluate.py --dry_run
 ```
 
-The demo uses synthetic data only. It is a smoke test for layout and metrics, not a trained-model quality benchmark.
+The demo uses synthetic data only. It validates the software path, not the
+reported segmentation accuracy.

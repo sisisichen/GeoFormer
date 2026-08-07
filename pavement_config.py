@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Configuration for GeoFormerX 2D+3D pavement multi-class segmentation.
+"""Configuration for GeoFormerX intensity-range pavement segmentation.
 
 This project was originally designed around per-task binary masks stored as .npy.
 Your dataset is:
 
   data/
-    train/image   (2D RGB, filenames like DL2xxxx.png)
+    train/image   (grayscale intensity, filenames like DL2xxxx.png)
     train/label   (RGB mask .bmp)
     val/image
     val/label
     test/image
     test/label
-    3Ddate/       (3D png mapped from .bin, filenames like DL3xxxx.png)
+    3Ddate/       (8-bit range-coded PNG, filenames like DL3xxxx.png)
 
 We modify SAM's mask decoder to output 7 foreground-class logits in **one forward**
 (for Crack..Manhole). Background is produced by thresholding / argmax fusion.
@@ -41,19 +41,19 @@ CLASS_RGB_VALUES: List[List[int]] = [
     [255, 255, 255],  # 0 Background
     [255,   0,   0],  # 1 Crack
     [  0, 255,   0],  # 2 Pothole
-    [140,  40, 225],  # 3 Seal
+    [140,  40, 225],  # 3 Sealed Crack
     [  0, 190, 255],  # 4 Patch
-    [  0,   0, 255],  # 5 Marking
-    [140,  70,   0],  # 6 Joint
-    [255, 100,  50],  # 7 Manhole
+    [  0,   0, 255],  # 5 Road Marking
+    [140,  70,   0],  # 6 Expansion Joint
+    [255, 100,  50],  # 7 Manhole Cover
 ]
 
 # Backward-compat alias (some scripts used CLASS_COLORS)
 CLASS_COLORS = CLASS_RGB_VALUES
 
 CLASS_NAMES: List[str] = [
-    "Background", "Crack", "Pothole", "Seal",
-    "Patch", "Marking", "Joint", "Manhole",
+    "Background", "Crack", "Pothole", "Sealed Crack",
+    "Patch", "Road Marking", "Expansion Joint", "Manhole Cover",
 ]
 
 
@@ -75,7 +75,7 @@ DIST_THRESHOLD = 25.0
 # Tiling settings
 # ----------------------
 TILE_SIZE = 256
-TILE_STRIDE = 256
+TILE_STRIDE = 128
 
 
 # ----------------------

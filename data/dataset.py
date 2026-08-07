@@ -142,23 +142,35 @@ def find_3d_path(image3d_root: str, split: str, image2d_name: str) -> str:
 
 
 def rgb_to_label_nearest(mask_rgb: np.ndarray, dist_threshold: float, ignore_index: int) -> np.ndarray:
-    """Nearest-color encoding for palette masks, but memory-safe.
+    """Decode the audited PaIR-Pave10K palette without nearest-color guessing.
 
-    This implementation works on *unique RGB colors* instead of broadcasting over
-    every pixel against the whole palette, which avoids very large temporary arrays
-    on high-resolution road images.
-    Returns uint8 labels for compact caching/storage.
+    The eight declared colors map to class IDs 0..7. The audited extra color
+    ``#008C5A`` maps to ``ignore_index``. Any other color raises an error so a
+    corrupted or incompatible mask cannot silently change the ground truth.
+
+    ``dist_threshold`` remains in the signature for checkpoint/tooling
+    compatibility but is intentionally unused by the strict decoder.
     """
-    flat = mask_rgb.reshape(-1, 3).astype(np.float32, copy=False)
+    del dist_threshold
+    if mask_rgb.ndim != 3 or mask_rgb.shape[2] != 3:
+        raise ValueError(f"Expected an RGB mask, got shape={mask_rgb.shape}")
+    flat = mask_rgb.reshape(-1, 3).astype(np.uint8, copy=False)
     uniq, inv = np.unique(flat, axis=0, return_inverse=True)
-    palette = PAV_CLASS_RGB_VALUES_NP.astype(np.float32, copy=False)
-    dist = np.linalg.norm(uniq[:, None, :] - palette[None, :, :], axis=-1)
-    label_u = np.argmin(dist, axis=-1).astype(np.uint8)
-    min_dist = np.min(dist, axis=-1)
-    if ignore_index is not None:
-        label_u[min_dist > float(dist_threshold)] = np.uint8(ignore_index)
-    label = label_u[inv].reshape(mask_rgb.shape[:2])
-    return label
+    palette = PAV_CLASS_RGB_VALUES_NP.astype(np.uint8, copy=False)
+    ignore_rgb = np.array([0, 140, 90], dtype=np.uint8)
+    decoded = np.full((len(uniq),), 255, dtype=np.uint8)
+    unknown = []
+    for i, color in enumerate(uniq):
+        matches = np.flatnonzero(np.all(palette == color[None, :], axis=1))
+        if len(matches) == 1:
+            decoded[i] = np.uint8(matches[0])
+        elif np.array_equal(color, ignore_rgb):
+            decoded[i] = np.uint8(ignore_index)
+        else:
+            unknown.append('#' + ''.join(f'{int(v):02X}' for v in color))
+    if unknown:
+        raise ValueError(f"Unexpected mask color(s): {', '.join(unknown[:8])}")
+    return decoded[inv].reshape(mask_rgb.shape[:2])
 
 
 def _pad_to_multiple(

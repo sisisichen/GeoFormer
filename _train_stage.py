@@ -113,16 +113,18 @@ def dice_batch(pred_bin: torch.Tensor, gt_bin: torch.Tensor, eps: float = 1e-6) 
     return dice
 
 
-# setup seeds
-seed = 2025
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-torch.cuda.empty_cache()
-torch.cuda.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.deterministic = True
+def set_global_seed(seed: int) -> None:
+    """Initialize the formal-run RNGs from one explicit seed."""
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 # ==========================
@@ -442,9 +444,16 @@ parser.add_argument("--sam_image_size", type=int, default=256,
                     help="SAM encoder input size. Larger values use more VRAM and may improve fine-detail segmentation.")
 parser.add_argument("--task_name", type=str, default="geoformerx")
 parser.add_argument("--method", type=str, default="geoformerx", choices=["geoformerx"])
+parser.add_argument("--seed", type=int, default=2028, help="Formal-run seed (2026, 2027, or 2028 in the manuscript).")
 parser.add_argument("--bottleneck_dim", type=int, default=16)
 parser.add_argument("--embedding_dim", type=int, default=16)
 parser.add_argument("--expert_num", type=int, default=8)
+parser.add_argument("--fusion_gate_variant", type=str, default="G8", choices=["G8", "G4", "G0"],
+                    help="Range-contribution gate used by the fusion module.")
+parser.add_argument("--adapter_variant", type=str, default="S0", choices=["M0", "S0", "A0"],
+                    help="Encoder adaptation: routed MoE (M0), static residual adapter (S0), or decoder-only (A0).")
+parser.add_argument("--static_bottleneck_dim", type=int, default=42,
+                    help="Bottleneck width of the single-path S0 adapter.")
 # MoE anti-collapse (gate regularization)
 parser.add_argument("--moe_topk", type=int, default=2,
                     help="top-k experts used by the gate (0 = dense softmax, original behavior)")
@@ -476,7 +485,7 @@ parser.add_argument("--data_path", type=str, default="./data",
 
 # pavement tiling / prompts
 parser.add_argument("--tile_size", type=int, default=256, help="Tile size (default: 256)")
-parser.add_argument("--tile_stride", type=int, default=256, help="Tile stride (default: 256, no overlap)")
+parser.add_argument("--tile_stride", type=int, default=128, help="Tile stride (default: 128, 50% overlap)")
 
 # --- Train-time tile sampling tricks (recommended for Crack / thin defects) ---
 parser.add_argument(
@@ -762,6 +771,7 @@ parser.add_argument("--init_from", type=str, default=None,
 
 
 def main(args):
+    set_global_seed(int(getattr(args, 'seed', 2028)))
     device = torch.device(args.device)
 
     checkpoint = join(args.checkpoint, sam_model_checkpoint[args.model_type])
@@ -787,6 +797,9 @@ def main(args):
             use_fusion_2d3d=bool(int(getattr(args, 'use_fusion_2d3d', 1)) == 1),
             fusion_hidden=int(getattr(args, 'fusion_hidden', 16)),
             fusion_mode=str(getattr(args, 'fusion_mode', 'global')),
+            fusion_gate_variant=str(getattr(args, 'fusion_gate_variant', 'G8')),
+            adapter_variant=str(getattr(args, 'adapter_variant', 'S0')),
+            static_bottleneck_dim=int(getattr(args, 'static_bottleneck_dim', 42)),
             use_logit_refiner=bool(int(getattr(args, 'use_logit_refiner', 0)) == 1),
             refiner_hidden=int(getattr(args, 'refiner_hidden', 32)),
             use_specialist_refiner=bool(int(getattr(args, 'use_specialist_refiner', 0)) == 1),
@@ -1627,6 +1640,9 @@ def main(args):
             },
             'model_cfg': {
                 'sam_image_size': int(getattr(args, 'sam_image_size', 256)),
+                'fusion_gate_variant': str(getattr(args, 'fusion_gate_variant', 'G8')),
+                'adapter_variant': str(getattr(args, 'adapter_variant', 'S0')),
+                'static_bottleneck_dim': int(getattr(args, 'static_bottleneck_dim', 42)),
                 'use_logit_refiner': int(getattr(args, 'use_logit_refiner', 0)),
                 'refiner_hidden': int(getattr(args, 'refiner_hidden', 32)),
                 'use_specialist_refiner': int(getattr(args, 'use_specialist_refiner', 0)),
@@ -1824,6 +1840,9 @@ def main(args):
                             'ema_used': bool(use_ema_eval),
                             'model_cfg': {
                                 'sam_image_size': int(getattr(args, 'sam_image_size', 256)),
+                                'fusion_gate_variant': str(getattr(args, 'fusion_gate_variant', 'G8')),
+                                'adapter_variant': str(getattr(args, 'adapter_variant', 'S0')),
+                                'static_bottleneck_dim': int(getattr(args, 'static_bottleneck_dim', 42)),
                                 'use_logit_refiner': int(getattr(args, 'use_logit_refiner', 0)),
                                 'refiner_hidden': int(getattr(args, 'refiner_hidden', 32)),
                                 'use_specialist_refiner': int(getattr(args, 'use_specialist_refiner', 0)),
@@ -1930,6 +1949,9 @@ def main(args):
                     'ema_used': bool(use_ema_eval),
                     'model_cfg': {
                         'sam_image_size': int(getattr(args, 'sam_image_size', 256)),
+                        'fusion_gate_variant': str(getattr(args, 'fusion_gate_variant', 'G8')),
+                        'adapter_variant': str(getattr(args, 'adapter_variant', 'S0')),
+                        'static_bottleneck_dim': int(getattr(args, 'static_bottleneck_dim', 42)),
                         'use_logit_refiner': int(getattr(args, 'use_logit_refiner', 0)),
                         'refiner_hidden': int(getattr(args, 'refiner_hidden', 32)),
                         'use_specialist_refiner': int(getattr(args, 'use_specialist_refiner', 0)),

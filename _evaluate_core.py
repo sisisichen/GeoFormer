@@ -121,6 +121,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--moe_style_scale', type=float, default=0.25)
     p.add_argument('--fusion_hidden', type=int, default=16)
     p.add_argument('--fusion_mode', type=str, default='auto', choices=['auto', 'global', 'hybrid', 'fixed'])
+    p.add_argument('--fusion_gate_variant', type=str, default='auto', choices=['auto', 'G8', 'G4', 'G0'])
+    p.add_argument('--adapter_variant', type=str, default='auto', choices=['auto', 'M0', 'S0', 'A0'])
+    p.add_argument('--static_bottleneck_dim', type=int, default=42)
     p.add_argument('--use_logit_refiner', type=int, default=-1, help='-1:auto detect from checkpoint, 0:disable, 1:enable')
     p.add_argument('--refiner_hidden', type=int, default=32)
     p.add_argument('--use_specialist_refiner', type=int, default=-1, help='-1:auto detect from checkpoint, 0:disable, 1:enable')
@@ -128,7 +131,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--surface_refiner_hidden', type=int, default=32)
 
     p.add_argument('--tile_size', type=int, default=256)
-    p.add_argument('--tile_stride', type=int, default=256)
+    p.add_argument('--tile_stride', type=int, default=128)
     p.add_argument('--batch_size', type=int, default=32)
 
     p.add_argument('--prompt_mode', type=str, default='full', choices=['full', 'gt_box'],
@@ -319,6 +322,17 @@ def build_model(
         fusion_mode = str(model_cfg.get('fusion_mode', 'auto')).lower() if isinstance(model_cfg, dict) and str(model_cfg.get('fusion_mode', '')) else fusion_mode
         if fusion_mode == 'auto':
             fusion_mode = 'hybrid' if any(str(k).startswith('fusion_2d3d.spatial_gate') for k in model_state.keys()) else 'global'
+    fusion_gate_variant = str(getattr(args, 'fusion_gate_variant', 'auto'))
+    if fusion_gate_variant.lower() == 'auto':
+        fusion_gate_variant = str(model_cfg.get('fusion_gate_variant', 'G8'))
+    fusion_gate_variant = fusion_gate_variant.upper()
+    adapter_variant = str(getattr(args, 'adapter_variant', 'auto'))
+    if adapter_variant.lower() == 'auto':
+        adapter_variant = str(model_cfg.get('adapter_variant', 'S0'))
+        if 'adapter_variant' not in model_cfg:
+            adapter_variant = 'S0' if any('adapter_up.2.weight' in str(k) for k in model_state.keys()) else 'M0'
+    adapter_variant = adapter_variant.upper()
+    static_bottleneck_dim = int(model_cfg.get('static_bottleneck_dim', getattr(args, 'static_bottleneck_dim', 42)))
     use_logit_refiner = int(getattr(args, 'use_logit_refiner', -1))
     if use_logit_refiner < 0:
         if isinstance(model_cfg, dict) and 'use_logit_refiner' in model_cfg:
@@ -373,6 +387,9 @@ def build_model(
         use_fusion_2d3d=bool(int(args.use_fusion_2d3d) == 1),
         fusion_hidden=int(args.fusion_hidden),
         fusion_mode=fusion_mode,
+        fusion_gate_variant=fusion_gate_variant,
+        adapter_variant=adapter_variant,
+        static_bottleneck_dim=static_bottleneck_dim,
         use_logit_refiner=bool(use_logit_refiner == 1),
         refiner_hidden=refiner_hidden,
         use_specialist_refiner=bool(use_specialist_refiner == 1),

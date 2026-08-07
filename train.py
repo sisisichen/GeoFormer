@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""One-command GeoFormerX training entry.
-
-The full recipe is intentionally hidden behind a small CLI.  It trains the base
-model, trains the line-specialist refinement stage, then merges all class-best
-states into one final checkpoint.
-"""
+"""One-command GeoFormerX-G8-D0-S0 training entry."""
 
 from __future__ import annotations
 
@@ -12,10 +7,9 @@ import argparse
 import json
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-from geoformerx_recipe import base_stage_args, specialist_stage_args, merge_args, apply_ablation_variant
+from geoformerx_recipe import base_stage_args, apply_ablation_variant
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,12 +20,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model_type", default="vit_b", choices=["vit_b", "vit_l", "vit_h"])
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--device_ids", nargs="+", type=int, default=[0])
-    p.add_argument("--epochs", type=int, default=50, help="Epochs for each training stage. Default: 50.")
-    p.add_argument("--base_batch_size", type=int, default=28)
-    p.add_argument("--specialist_batch_size", type=int, default=24)
+    p.add_argument("--epochs", type=int, default=50, help="Number of epochs. Default: 50.")
+    p.add_argument("--batch_size", type=int, default=28)
+    p.add_argument("--seed", type=int, default=2028, help="Formal-run seed; the paper reports 2026, 2027, and 2028.")
     p.add_argument("--overwrite", action="store_true", help="Delete work_dir before training.")
-    p.add_argument("--skip_base", action="store_true", help="Reuse work_dir/base/model_best.pth and train only the specialist stage.")
-    p.add_argument("--ablation", default="full", choices=["full", "no_depth", "no_geometry_gate", "no_style_routing"], help="Train a paper ablation variant.")
+    p.add_argument("--ablation", default="full", choices=["full", "no_range", "no_geometry_gate", "moe_adapter", "decoder_only"], help="Optional architecture-screening variant.")
     p.add_argument("--dry_run", action="store_true", help="Print resolved commands without executing them.")
     return p.parse_args()
 
@@ -56,54 +49,44 @@ def main() -> None:
     base_ckpt = work_dir / "base" / "model_best.pth"
     final_ckpt = work_dir / "model_final.pth"
 
-    if not args.skip_base:
-        run(
-            apply_ablation_variant(base_stage_args(
-                data_path=args.data_path,
-                checkpoint=args.checkpoint,
-                work_dir=str(work_dir),
-                model_type=args.model_type,
-                device=args.device,
-                device_ids=args.device_ids,
-                num_epochs=args.epochs,
-                batch_size=args.base_batch_size,
-            ), args.ablation),
-            f"Stage 1/3: base GeoFormerX training [{args.ablation}]",
-            dry_run=args.dry_run,
-        )
-    elif not base_ckpt.exists():
-        raise FileNotFoundError(f"--skip_base was set, but base checkpoint is missing: {base_ckpt}")
-
     run(
-        apply_ablation_variant(specialist_stage_args(
+        apply_ablation_variant(base_stage_args(
             data_path=args.data_path,
             checkpoint=args.checkpoint,
             work_dir=str(work_dir),
-            init_from=str(base_ckpt),
             model_type=args.model_type,
             device=args.device,
             device_ids=args.device_ids,
             num_epochs=args.epochs,
-            batch_size=args.specialist_batch_size,
+            batch_size=args.batch_size,
+            seed=args.seed,
         ), args.ablation),
-        f"Stage 2/3: line-specialist refinement training [{args.ablation}]",
+        f"GeoFormerX-G8-D0-S0 training [{args.ablation}]",
         dry_run=args.dry_run,
     )
 
-    run(merge_args(str(work_dir)), "Stage 3/3: merge one final checkpoint", dry_run=args.dry_run)
+    if not args.dry_run:
+        if not base_ckpt.exists():
+            raise FileNotFoundError(f"Training completed without a selected checkpoint: {base_ckpt}")
+        shutil.copy2(base_ckpt, final_ckpt)
 
     manifest = {
         "final_checkpoint": str(final_ckpt),
         "base_checkpoint": str(base_ckpt),
         "data_path": args.data_path,
         "sam_checkpoint_dir": args.checkpoint,
-        "epochs_per_stage": args.epochs,
+        "epochs": args.epochs,
+        "seed": args.seed,
+        "canonical_model": "GeoFormerX-G8-D0-S0",
         "ablation": args.ablation,
     }
     if not args.dry_run:
         (work_dir / "training_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print("\nTraining pipeline finished.")
-    print(f"Final checkpoint: {final_ckpt}")
+    if args.dry_run:
+        print("\nDry run finished; no training was started.")
+    else:
+        print("\nTraining finished.")
+        print(f"Final checkpoint: {final_ckpt}")
 
 
 if __name__ == "__main__":

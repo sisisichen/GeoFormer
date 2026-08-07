@@ -1,0 +1,63 @@
+schema: GeoFormerX.canonical_config.v1
+model: GeoFormerX-G8-D0-S0
+
+architecture:
+  backbone: SAM ViT-B
+  frozen:
+    image_encoder: true
+    prompt_encoder: true
+  gate:
+    variant: G8
+    descriptor: [I1_mean, I2_mean, I3_mean, I1_std, I2_std, I3_std, Q_mean, Q_std]
+    hidden_channels: 16
+    spatial_modulation: true
+    global_bias: -0.5
+    spatial_bias: 0.0
+  adapter:
+    variant: S0
+    blocks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    dimensions: [768, 42, 42, 768]
+    router: false
+    experts: 0
+  decoder:
+    variant: D0
+    foreground_logits: 7
+    background_logit: 0.0
+    logit_refiner_hidden: 32
+
+input:
+  modalities: [grayscale_intensity, range_coded_raster]
+  image_size: [512, 256]
+  tile_size: 256
+  tile_stride: 128
+  prompt_box: [0, 0, 256, 256]
+
+optimizer:
+  type: AdamW
+  base_lr: 0.0003
+  decoder_lr: 0.000075
+  weight_decay: 0.01
+  epochs: 50
+  batch_size_tiles: 28
+  precision: fp32
+  gradient_clip_norm: 1.0
+  schedule:
+    type: flatcosine
+    warmup_epochs: 1
+    hold_epochs: 32
+    min_lr: 0.00001
+  ema:
+    enabled: true
+    decay: 0.995
+
+evaluation:
+  tta_horizontal_flip: true
+  blend: hann
+  stitch: logits
+  selection_metric: foreground_macro_Dice
+
+parameters:
+  total: 92073368
+  trainable: 5394508
+  frozen: 86678860
+  trainable_ratio: 0.058589

@@ -41,9 +41,21 @@ class Fusion2D3D(nn.Module):
     milder initialization so the RGBD branch can participate earlier.
     """
 
-    def __init__(self, hidden: int = 16, mode: str = "global", global_init_bias: float = -0.5, spatial_init_bias: float = 0.0):
+    def __init__(
+        self,
+        hidden: int = 16,
+        mode: str = "global",
+        global_init_bias: float = -0.5,
+        spatial_init_bias: float = 0.0,
+        gate_variant: str = "G8",
+    ):
         super().__init__()
+        self.gate_variant = str(gate_variant).upper().strip()
+        if self.gate_variant not in {"G8", "G4", "G0"}:
+            raise ValueError(f"Unsupported fusion gate variant: {gate_variant}")
         self.mode = str(mode).lower()
+        if self.gate_variant == "G0":
+            self.mode = "fixed"
         if self.mode not in {"global", "hybrid", "fixed"}:
             raise ValueError(f"Unsupported fusion mode: {mode}")
 
@@ -52,8 +64,9 @@ class Fusion2D3D(nn.Module):
         if self.mode == "fixed":
             self.global_gate = None
         else:
+            gate_input_dim = 4 if self.gate_variant == "G4" else 8
             self.global_gate = nn.Sequential(
-                nn.Linear(8, int(hidden)),
+                nn.Linear(gate_input_dim, int(hidden)),
                 nn.ReLU(inplace=True),
                 nn.Linear(int(hidden), 1),
                 nn.Sigmoid(),
@@ -90,18 +103,31 @@ class Fusion2D3D(nn.Module):
         # local residual acts like a cheap edge/relief cue without hard-coded kernels
         return d - torch.nn.functional.avg_pool2d(d, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, rgbd: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if rgbd.ndim != 4:
-            raise ValueError(f"Fusion2D3D expects (B,C,H,W), got {tuple(rgbd.shape)}")
-        if rgbd.shape[1] != 4:
-            raise ValueError(f"Fusion2D3D expects 4 channels (RGBD), got C={rgbd.shape[1]}")
-
-        rgb = rgbd[:, :3]
-        d = rgbd[:, 3:4]
+    def forward(self, intensity_range: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if intensity_range.ndim != 4:
+            raise ValueError(f"Fusion2D3D expects (B,C,H,W), got {tuple(intensity_range.shape)}")
+        if intensity_range.shape[1] == 2:
+            intensity = intensity_range[:, 0:1]
+            d = intensity_range[:, 1:2]
+            # The Dataset keeps Intensity single-channel.  Replication happens
+            # here, inside the model adapter immediately upstream of SAM.
+            rgb = intensity.repeat(1, 3, 1, 1)
+        elif intensity_range.shape[1] == 4:
+            # Backward compatibility for existing checkpoints/tools.
+            rgb = intensity_range[:, :3]
+            d = intensity_range[:, 3:4]
+        else:
+            raise ValueError(
+                f"Fusion2D3D expects 2 channels (Intensity,Range) or legacy RGBD, "
+                f"got C={intensity_range.shape[1]}"
+            )
         if self.mode == "fixed":
             alpha_g = torch.ones((rgb.shape[0], 1, 1, 1), device=rgb.device, dtype=rgb.dtype)
         else:
-            rgb_stats = self._stats(rgb)
+            # G4 uses exactly [mean(I), std(I), mean(R), std(R)].
+            # G8 preserves the formal F4 implementation: three replicated
+            # intensity-channel means/stds plus Range mean/std.
+            rgb_stats = self._stats(rgb[:, 0:1] if self.gate_variant == "G4" else rgb)
             d_stats = self._stats(d)
             stats = torch.cat([rgb_stats, d_stats], dim=1)
             alpha_g = self.global_gate(stats).view(-1, 1, 1, 1)
@@ -118,13 +144,13 @@ class Fusion2D3D(nn.Module):
 
 
 class LogitRefiner(nn.Module):
-    """Lightweight RGBD-aware residual refiner on top of SAM logits.
+    """Lightweight intensity-range residual refiner on top of SAM logits.
 
     Motivation
     ----------
     SAM decoder logits are already strong on dominant classes, but small/rare
     defects can benefit from a shallow local correction head that sees the raw
-    RGBD tile together with the current logits.
+    intensity-range tile together with the current logits.
     """
 
     def __init__(self, num_logits: int, in_img_channels: int = 4, hidden: int = 32):
@@ -480,15 +506,42 @@ class MoEAdaptMLPBlock(nn.Module):
         return x_out, probs
 
 
+class StaticAdaptMLPBlock(nn.Module):
+    """Non-routed residual adapter used by the S0 screening variant."""
+
+    def __init__(self, mlp: MLPBlock, bottleneck_dim: int = 42) -> None:
+        super().__init__()
+        self.mlp = mlp
+        self.bottleneck_dim = int(bottleneck_dim)
+        self.adapter_down = nn.Sequential(
+            nn.Linear(768, self.bottleneck_dim),
+            nn.GELU(),
+        )
+        self.adapter_up = nn.Sequential(
+            nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
+            nn.GELU(),
+            nn.Linear(self.bottleneck_dim, 768),
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        modal: torch.Tensor = None,
+        route: tuple = None,
+        force_expert: torch.Tensor = None,
+    ):
+        return self.mlp(x) + self.adapter_up(self.adapter_down(x)), None
+
+
 
 class GeoFormerX(nn.Module):
-    """Applies Tree MoE Adapter to SAM's image encoder.
+    """Adapt SAM with selectable fusion, encoder-adapter, and decoder paths.
 
     Args:
         sam: segment anything model, see 'segment_anything' dir
-        bottleneck_dim: bottleneck dimension of adapter
-        embedding_dim: modal and route embedding dimension
-        expert_num: number of experts in MoE adapter
+        bottleneck_dim: bottleneck dimension of the routed M0 adapter
+        embedding_dim: modal and route embedding dimension used by M0
+        expert_num: number of experts in the M0 adapter
         pos: which layer to apply adapter
     """
 
@@ -510,6 +563,10 @@ class GeoFormerX(nn.Module):
         use_fusion_2d3d: bool = True,
         fusion_hidden: int = 16,
         fusion_mode: str = "global",
+        fusion_gate_variant: str = "G8",
+        # encoder adapter screening
+        adapter_variant: str = "M0",
+        static_bottleneck_dim: int = 42,
         # local residual refinement head
         use_logit_refiner: bool = False,
         refiner_hidden: int = 32,
@@ -527,6 +584,13 @@ class GeoFormerX(nn.Module):
         assert bottleneck_dim > 0
         assert embedding_dim > 0
         assert expert_num > 0
+        self.adapter_variant = str(adapter_variant).upper().strip()
+        if self.adapter_variant not in {"M0", "S0", "A0"}:
+            raise ValueError(f"Unsupported adapter variant: {adapter_variant}")
+        self.static_bottleneck_dim = int(static_bottleneck_dim)
+        if self.adapter_variant == "S0" and self.static_bottleneck_dim <= 0:
+            raise ValueError("static_bottleneck_dim must be positive for S0")
+        self.fusion_gate_variant = str(fusion_gate_variant).upper().strip()
 
         # assign Adapter layer position (all layers by default)
         if pos:
@@ -557,67 +621,74 @@ class GeoFormerX(nn.Module):
             for param in sam.image_encoder.blocks[bid].parameters():
                 param.requires_grad = True
 
-        # modality and route embedding index
-        modal_index = get_index(modal_map_idx)
-        route_index_1 = get_index(route_level_1_map_idx)
-        route_index_2 = get_index(route_level_2_map_idx)
-        route_index_3 = get_index(route_level_3_map_idx)
+        # Routing embeddings are part of M0 only. Static and decoder-only
+        # variants deliberately omit them rather than retaining unused params.
+        self.use_route_embeddings = self.adapter_variant == "M0"
+        if self.use_route_embeddings:
+            modal_index = get_index(modal_map_idx)
+            route_index_1 = get_index(route_level_1_map_idx)
+            route_index_2 = get_index(route_level_2_map_idx)
+            route_index_3 = get_index(route_level_3_map_idx)
 
-        sam.image_encoder.register_buffer('modal_index', modal_index, False)
-        sam.image_encoder.register_buffer('route_index_1', route_index_1, False)
-        sam.image_encoder.register_buffer('route_index_2', route_index_2, False)
-        sam.image_encoder.register_buffer('route_index_3', route_index_3, False)
+            sam.image_encoder.register_buffer('modal_index', modal_index, False)
+            sam.image_encoder.register_buffer('route_index_1', route_index_1, False)
+            sam.image_encoder.register_buffer('route_index_2', route_index_2, False)
+            sam.image_encoder.register_buffer('route_index_3', route_index_3, False)
 
-        modal_embed = nn.Embedding(len(modal_map_idx), embedding_dim)
-        route_embed_0 = nn.Embedding(1, embedding_dim)
-        route_embed_1 = nn.Embedding(len(route_level_1_map_idx), embedding_dim)
-        route_embed_2 = nn.Embedding(len(route_level_2_map_idx), embedding_dim)
-        route_embed_3 = nn.Embedding(len(route_level_3_map_idx), embedding_dim)
-        route_embed_4 = nn.Embedding(len(task_list)+1, embedding_dim)
-        dataset_buckets = int(os.getenv("MOE_DATASET_BUCKETS", "1024"))
-        route_embed_5 = nn.Embedding(dataset_buckets, embedding_dim)
-        ## ---- IMPORTANT: non-zero init so gate can learn to use task/dataset/modal ----
-        # Small random init keeps early routing close to uniform while allowing gradients to flow.
-        nn.init.normal_(modal_embed.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_0.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_1.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_2.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_3.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_4.weight, mean=0.0, std=0.02)
-        nn.init.normal_(route_embed_5.weight, mean=0.0, std=0.02)
+            modal_embed = nn.Embedding(len(modal_map_idx), embedding_dim)
+            route_embed_0 = nn.Embedding(1, embedding_dim)
+            route_embed_1 = nn.Embedding(len(route_level_1_map_idx), embedding_dim)
+            route_embed_2 = nn.Embedding(len(route_level_2_map_idx), embedding_dim)
+            route_embed_3 = nn.Embedding(len(route_level_3_map_idx), embedding_dim)
+            route_embed_4 = nn.Embedding(len(task_list)+1, embedding_dim)
+            dataset_buckets = int(os.getenv("MOE_DATASET_BUCKETS", "1024"))
+            route_embed_5 = nn.Embedding(dataset_buckets, embedding_dim)
+            for embedding in (
+                modal_embed, route_embed_0, route_embed_1, route_embed_2,
+                route_embed_3, route_embed_4, route_embed_5,
+            ):
+                nn.init.normal_(embedding.weight, mean=0.0, std=0.02)
 
-        sam.image_encoder.modal_embed = modal_embed
-        sam.image_encoder.route_embed = nn.ModuleList([
-            route_embed_0, route_embed_1, 
-            route_embed_2, route_embed_3, 
-            route_embed_4, 
-            route_embed_5,
-        ])
+            sam.image_encoder.modal_embed = modal_embed
+            sam.image_encoder.route_embed = nn.ModuleList([
+                route_embed_0, route_embed_1, route_embed_2, route_embed_3,
+                route_embed_4, route_embed_5,
+            ])
 
         # apply Adapter to SAM image encoder
         for idx, blk in enumerate(sam.image_encoder.blocks):
             if idx not in self.pos:
                 continue
 
-            # create moe adapter layers
-            blk.mlp = MoEAdaptMLPBlock(
-                blk.mlp,
-                embedding_dim=embedding_dim,
-                bottleneck_dim=bottleneck_dim,
-                expert_num=expert_num,
-                gate_topk=gate_topk,
-                gate_temperature=gate_temperature,
-                gate_noise=gate_noise_std,
-                style_bn=style_bn,
-                style_dropout=style_dropout,
-                style_scale=style_scale,
-            )
+            if self.adapter_variant == "M0":
+                blk.mlp = MoEAdaptMLPBlock(
+                    blk.mlp,
+                    embedding_dim=embedding_dim,
+                    bottleneck_dim=bottleneck_dim,
+                    expert_num=expert_num,
+                    gate_topk=gate_topk,
+                    gate_temperature=gate_temperature,
+                    gate_noise=gate_noise_std,
+                    style_bn=style_bn,
+                    style_dropout=style_dropout,
+                    style_scale=style_scale,
+                )
+            elif self.adapter_variant == "S0":
+                blk.mlp = StaticAdaptMLPBlock(
+                    blk.mlp,
+                    bottleneck_dim=self.static_bottleneck_dim,
+                )
+            # A0 intentionally leaves the original frozen MLP untouched.
 
         self.sam = sam
 
         # Trainable 2D+3D fusion head (kept outside frozen SAM encoders).
         self.use_fusion_2d3d = bool(use_fusion_2d3d)
-        self.fusion_2d3d = Fusion2D3D(hidden=int(fusion_hidden), mode=str(fusion_mode)) if self.use_fusion_2d3d else None
+        self.fusion_2d3d = Fusion2D3D(
+            hidden=int(fusion_hidden),
+            mode=str(fusion_mode),
+            gate_variant=self.fusion_gate_variant,
+        ) if self.use_fusion_2d3d else None
         self.use_logit_refiner = bool(use_logit_refiner)
         self.logit_refiner = LogitRefiner(num_logits=int(sam.mask_decoder.num_multimask_outputs), in_img_channels=4, hidden=int(refiner_hidden)) if self.use_logit_refiner else None
         self.use_specialist_refiner = bool(use_specialist_refiner)
@@ -714,39 +785,46 @@ class GeoFormerX(nn.Module):
         # w/o Depth ablation disables 2D-3D fusion, drop the depth channel here
         # as well so that no later refiner can accidentally use geometry.
         raw_img_for_refine = img
-        if img.ndim == 4 and img.shape[1] == 4 and not self.use_fusion_2d3d:
+        if img.ndim == 4 and img.shape[1] == 2:
+            # Optional legacy refinement heads were trained with RGBD-shaped
+            # tensors.  Reuse the same model-side adapter without changing any
+            # learned layer or checkpoint tensor shape.
+            raw_img_for_refine = torch.cat([img[:, 0:1].repeat(1, 3, 1, 1), img[:, 1:2]], dim=1)
+        elif img.ndim == 4 and img.shape[1] == 4 and not self.use_fusion_2d3d:
             raw_img_for_refine = img[:, :3]
 
         # modal and route embedding
         B = img.shape[0]
-
-        modal_index = self.sam.image_encoder.modal_index[modal]
-        modal_embed = self.sam.image_encoder.modal_embed(modal_index)
-
-        # route indices can be (l1,l2,l3,l4) or (l1,l2,l3,l4,dataset...)
-        if len(route) == 4:
-            route_1, route_2, route_3, route_4 = route
-            dataset_idx = None
-        elif len(route) == 5:
-            route_1, route_2, route_3, route_4, dataset_idx = route
+        if self.use_route_embeddings:
+            modal_index = self.sam.image_encoder.modal_index[modal]
+            modal_embed = self.sam.image_encoder.modal_embed(modal_index)
+            if len(route) == 4:
+                route_1, route_2, route_3, route_4 = route
+                dataset_idx = None
+            elif len(route) == 5:
+                route_1, route_2, route_3, route_4, dataset_idx = route
+            else:
+                raise ValueError(f"Invalid route tuple length: {len(route)}")
+            route_index_0 = torch.zeros(B, dtype=torch.long, device=img.device)
+            route_embed_0 = self.sam.image_encoder.route_embed[0](route_index_0)
+            route_index_1 = self.sam.image_encoder.route_index_1[route_1]
+            route_embed_1 = self.sam.image_encoder.route_embed[1](route_index_1)
+            route_index_2 = self.sam.image_encoder.route_index_2[route_2]
+            route_embed_2 = self.sam.image_encoder.route_embed[2](route_index_2)
+            route_index_3 = self.sam.image_encoder.route_index_3[route_3]
+            route_embed_3 = self.sam.image_encoder.route_embed[3](route_index_3)
+            route_embed_4 = self.sam.image_encoder.route_embed[4](route_4)
+            if dataset_idx is None:
+                route_embed_5 = torch.zeros_like(route_embed_4)
+            else:
+                route_embed_5 = self.sam.image_encoder.route_embed[5](dataset_idx)
+            route_embed = (
+                route_embed_0, route_embed_1, route_embed_2, route_embed_3,
+                route_embed_4, route_embed_5,
+            )
         else:
-            raise ValueError(f"Invalid route tuple length: {len(route)}")
-        route_index_0 = torch.zeros(B, dtype=torch.long, device=img.device)
-        route_embed_0 = self.sam.image_encoder.route_embed[0](route_index_0)
-        route_index_1 = self.sam.image_encoder.route_index_1[route_1]
-        route_embed_1 = self.sam.image_encoder.route_embed[1](route_index_1)
-        route_index_2 = self.sam.image_encoder.route_index_2[route_2]
-        route_embed_2 = self.sam.image_encoder.route_embed[2](route_index_2)
-        route_index_3 = self.sam.image_encoder.route_index_3[route_3]
-        route_embed_3 = self.sam.image_encoder.route_embed[3](route_index_3)
-
-        route_embed_4 = self.sam.image_encoder.route_embed[4](route_4)
-        if dataset_idx is None:
-            route_embed_5 = torch.zeros_like(route_embed_4)
-        else:
-            # dataset_idx already hashed to bucket in dataset.py
-            route_embed_5 = self.sam.image_encoder.route_embed[5](dataset_idx)
-        route_embed = (route_embed_0, route_embed_1, route_embed_2, route_embed_3, route_embed_4, route_embed_5)
+            modal_embed = None
+            route_embed = None
 
         # prompt encoder
         if len(box.shape) == 2:
@@ -762,16 +840,16 @@ class GeoFormerX(nn.Module):
         # 2D+3D fusion (optional)
         # --------------------------
         alpha = None
-        if img.shape[1] == 4:
+        if img.shape[1] in (2, 4):
             if self.use_fusion_2d3d and (self.fusion_2d3d is not None):
                 img, alpha = self.fusion_2d3d(img)
             else:
-                # fallback: drop 3D channel
-                img = img[:, :3]
+                # Drop Range and form SAM's 3-channel interface here.
+                img = img[:, 0:1].repeat(1, 3, 1, 1) if img.shape[1] == 2 else img[:, :3]
         elif img.shape[1] == 1:
             img = img.repeat(1, 3, 1, 1)
         elif img.shape[1] != 3:
-            raise ValueError(f"GeoFormerX expects input channels in [1,3,4], got C={img.shape[1]}")
+            raise ValueError(f"GeoFormerX expects input channels in [1,2,3,4], got C={img.shape[1]}")
 
         # --------------------------
         # Important
@@ -794,9 +872,13 @@ class GeoFormerX(nn.Module):
 
         # adapter image encoder
         input_image = self.sam.preprocess(img)  # (B,3,img_size,img_size)
-        image_embedding, expert_activation = self.sam.image_encoder(
+        encoder_output = self.sam.image_encoder(
             input_image, modal_embed, route_embed, force_expert=data.get('force_expert', None)
-        )  # (B, 256, 64, 64)
+        )
+        if isinstance(encoder_output, tuple):
+            image_embedding, expert_activation = encoder_output
+        else:
+            image_embedding, expert_activation = encoder_output, []
 
         # predicted masks
         mask_predictions, iou_pred = self.sam.mask_decoder(

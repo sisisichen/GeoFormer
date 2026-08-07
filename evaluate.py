@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--device_ids", nargs="+", type=int, default=[0])
     p.add_argument("--batch_size", type=int, default=10)
-    p.add_argument("--ablation", default="full", choices=["full", "no_depth", "no_geometry_gate", "no_style_routing"], help="Evaluation architecture variant; must match the checkpoint.")
+    p.add_argument("--ablation", default="full", choices=["full", "no_range", "no_geometry_gate", "moe_adapter", "decoder_only"], help="Evaluation architecture variant; must match the checkpoint.")
     p.add_argument("--stitch_mode", default="logits", choices=["logits", "hard"], help="Use hard for the patch-mosaic stitching ablation.")
     p.add_argument("--save_paper_outputs", type=int, default=1, choices=[0, 1])
     p.add_argument("--max_visuals", type=int, default=24)
@@ -45,11 +45,12 @@ def main() -> None:
         batch_size=args.batch_size,
     ), args.ablation)
     cmd += [
-        "--stitch_mode", str(args.stitch_mode),
         "--save_paper_outputs", str(int(args.save_paper_outputs)),
         "--max_visuals", str(int(args.max_visuals)),
         "--collect_debug", str(int(args.collect_debug)),
     ]
+    stitch_idx = cmd.index("--stitch_mode")
+    cmd[stitch_idx + 1] = str(args.stitch_mode)
     print(" ".join(str(x) for x in cmd))
     if not args.dry_run:
         subprocess.run(cmd, check=True)
