@@ -35,7 +35,10 @@ overlap-aware reconstruction.
 
 ## Architecture
 
-<div align="center"><img src="assets/figures/fig1_overall_architecture.png" alt="Overall GeoFormerX-G8-D0-S0 architecture" width="100%"></div>
+<p align="center">
+  <a href="assets/figures/fig1_overall_architecture.png"><img src="assets/figures/fig1_overall_architecture.png" alt="Overall GeoFormerX-G8-D0-S0 architecture" width="100%"></a><br>
+  <sub><a href="assets/figures/fig1_overall_architecture.png">Open the full-resolution figure</a></sub>
+</p>
 
 | Component | Canonical setting |
 | --- | --- |
@@ -50,7 +53,10 @@ overlap-aware reconstruction.
 
 ### G8 fusion and S0 adaptation
 
-<div align="center"><img src="assets/figures/fig2_g8_s0_modules.png" alt="G8 range-contribution module and S0 static residual adapter" width="86%"></div>
+<p align="center">
+  <a href="assets/figures/fig2_g8_s0_modules.png"><img src="assets/figures/fig2_g8_s0_modules.png" alt="G8 range-contribution module and S0 static residual adapter" width="100%"></a><br>
+  <sub><a href="assets/figures/fig2_g8_s0_modules.png">Open the full-resolution figure</a></sub>
+</p>
 
 The G8 gate controls the model-internal contribution of `Q`; it is not an
 estimate of physical sensor reliability. The S0 adapter was selected over the
@@ -64,7 +70,10 @@ PaIR-Pave10K contains 10,000 paired samples at `512 x 256` pixels. The original
 original 2,000-image validation set is split with seed 2026 into `source_val`
 and `adaptation_pool`, each with 1,000 images.
 
-<div align="center"><img src="assets/figures/fig3_data_partition.png" alt="Audited PaIR-Pave10K data partition and locked subset use" width="92%"></div>
+<p align="center">
+  <a href="assets/figures/fig3_data_partition.png"><img src="assets/figures/fig3_data_partition.png" alt="Audited PaIR-Pave10K data partition and locked subset use" width="100%"></a><br>
+  <sub><a href="assets/figures/fig3_data_partition.png">Open the full-resolution figure</a></sub>
+</p>
 
 - `train`: architecture screening and formal model fitting.
 - `source_val`: architecture and checkpoint selection.
@@ -74,7 +83,10 @@ and `adaptation_pool`, each with 1,000 images.
 
 ## Architecture selection
 
-<div align="center"><img src="assets/figures/fig4_architecture_screening.png" alt="Prespecified source-validation architecture screening" width="92%"></div>
+<p align="center">
+  <a href="assets/figures/fig4_architecture_screening.png"><img src="assets/figures/fig4_architecture_screening.png" alt="Prespecified source-validation architecture screening" width="100%"></a><br>
+  <sub><a href="assets/figures/fig4_architecture_screening.png">Open the full-resolution figure</a></sub>
+</p>
 
 | Stage | Selected | Alternatives | Source-val foreground macro Dice |
 | --- | --- | --- | ---: |
@@ -82,9 +94,15 @@ and `adaptation_pool`, each with 1,000 images.
 | Decoder | D0 | D1 | 0.7524 |
 | Adapter | S0 | M0, A0 | 0.7486 +/- 0.0019 |
 
-<div align="center"><img src="assets/figures/fig5_per_class_source_val.png" alt="Two-seed per-class source-validation diagnostics" width="92%"></div>
+<p align="center">
+  <a href="assets/figures/fig5_per_class_source_val.png"><img src="assets/figures/fig5_per_class_source_val.png" alt="Two-seed per-class source-validation diagnostics" width="100%"></a><br>
+  <sub><a href="assets/figures/fig5_per_class_source_val.png">Open the full-resolution figure</a></sub>
+</p>
 
-<div align="center"><img src="assets/figures/fig6_static_adapter_diagnostics.png" alt="Static-adapter selection diagnostics" width="92%"></div>
+<p align="center">
+  <a href="assets/figures/fig6_static_adapter_diagnostics.png"><img src="assets/figures/fig6_static_adapter_diagnostics.png" alt="Static-adapter selection diagnostics" width="100%"></a><br>
+  <sub><a href="assets/figures/fig6_static_adapter_diagnostics.png">Open the full-resolution figure</a></sub>
+</p>
 
 These two diagnostic figures report source-validation behavior only; they are
 not locked-test comparisons.
@@ -112,7 +130,10 @@ Across seeds 2026, 2027, and 2028, test foreground macro Dice was
 
 ### Qualitative comparison
 
-<div align="center"><img src="assets/figures/fig7_locked_test_qualitative.png" alt="Locked-test qualitative comparison for deterministic sample DL2D00006080" width="82%"></div>
+<p align="center">
+  <a href="assets/figures/fig7_locked_test_qualitative.png"><img src="assets/figures/fig7_locked_test_qualitative.png" alt="Locked-test qualitative comparison for deterministic sample DL2D00006080" width="100%"></a><br>
+  <sub><a href="assets/figures/fig7_locked_test_qualitative.png">Open the full-resolution figure</a></sub>
+</p>
 
 The displayed sample is deterministic position 600/1000, selected by an equally
 spaced ID rule rather than by performance.
