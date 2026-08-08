@@ -1,0 +1,10 @@
+file,change_type,scientific_behavior_changed,reason
+_evaluate_core.py,modified,false,"Added implementation-aligned TTA and Hann reconstruction comments only"
+configs/GeoFormerX_G8_D0_S0.yaml,modified,false,"Recorded the explicit 1:1 TTA merge rule"
+evaluate.py,modified,false,"Added protocol manifest generation and noncanonical-run warning"
+README.md,modified,false,"Documented the final protocol, historical disclosure, and latency scope"
+MODEL_CARD.md,modified,false,"Synchronized preprocessing, TTA, reconstruction, timing, disclosure, and limitations"
+docs/EVALUATION_PROTOCOL.md,added,false,"Added the canonical mathematical and operational protocol"
+tests/test_final_evaluation_protocol.py,added,false,"Added CPU-only protocol regression tests"
+GITHUB_FINAL_EVALUATION_PROTOCOL_SYNC_REPORT.md,added,false,"Recorded evidence, comparison, changes, and verification"
+GITHUB_PROTOCOL_CHANGED_FILES.csv,added,false,"Recorded the task-scoped changed-file inventory"

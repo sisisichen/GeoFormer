@@ -545,6 +545,8 @@ def infer_prob_maps_fg(
                         debug['gate_count'][li] += int(gd.shape[0])
 
             if bool(tta_hflip):
+                # Canonical paper TTA: restore horizontally reflected logits to
+                # the original orientation, then average original/reflected 1:1.
                 data_f = dict(data)
                 data_f['img'] = torch.flip(data['img'], dims=[3])
                 data_f['box'] = hflip_boxes(data['box'], tile=tile)
@@ -640,6 +642,8 @@ def infer_prob_maps_fg(
                 tile_onehot = np.eye(1 + NUM_FG_CLASSES, dtype=np.float32)[tile_pred].transpose(2, 0, 1)
                 logits_acc[:, y0:y0 + tile, x0:x0 + tile] += tile_onehot * blend_w[None, :, :]
             else:
+                # Canonical reconstruction: accumulate overlapping eight-class
+                # tile logits with the 2D Hann window; normalize below before argmax.
                 logits_acc[:, y0:y0 + tile, x0:x0 + tile] += logits_all_np[b] * blend_w[None, :, :]
             cnt_acc[y0:y0 + tile, x0:x0 + tile] += blend_w
 

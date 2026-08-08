@@ -52,6 +52,7 @@ optimizer:
 
 evaluation:
   tta_horizontal_flip: true
+  tta_merge: mean_1_to_1_after_unflip
   blend: hann
   stitch: logits
   selection_metric: foreground_macro_Dice

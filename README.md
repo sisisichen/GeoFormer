@@ -30,8 +30,9 @@ overlap-aware reconstruction.
   `[0, 0, 256, 256]` to every tile without manual or label-derived localization.
 - **One-pass eight-class output:** predicts seven foreground logits and prepends
   a fixed zero-valued background logit before loss, reconstruction, and argmax.
-- **Audited evaluation:** reports a frozen 1,000-image test, paired image-level
-  inference, three formal seeds, boundary metrics, and seam-region metrics.
+- **Audited evaluation:** reports a fixed-checkpoint 1,000-image test, paired
+  statistical analysis, three formal seeds, boundary metrics, and seam-region
+  metrics.
 
 ## Architecture
 
@@ -126,10 +127,15 @@ and `adaptation_pool`, each with 1,000 images.
 These two diagnostic figures report source-validation behavior only; they are
 not locked-test comparisons.
 
-## Frozen-test results
+## Final fixed-checkpoint test results under the revised protocol
 
-The primary paper comparison uses seed 2028 and the same 1,000 frozen test IDs
+The primary paper comparison uses seed 2028 and the same 1,000 fixed test IDs
 for all four methods.
+
+An earlier manuscript had reported results on an official test split. The
+public protocol therefore documents the fixed-checkpoint evaluation procedure
+used after the revised architecture and checkpoint-selection decisions had
+been completed.
 
 <div align="center">
 <table align="center">
@@ -153,8 +159,9 @@ for all four methods.
 </table>
 </div>
 
-Paired image-level inference found practically meaningful improvements over
-matched intensity-only FrozenSAM (`+0.0685`, Holm-adjusted `p = 0.0003`) and
+Paired image-level statistical analysis found practically meaningful
+improvements over matched intensity-only FrozenSAM (`+0.0685`, Holm-adjusted
+`p = 0.0003`) and
 SegFormer-B2 (`+0.0502`, `p = 0.0014`). The GeoFormerX-CMX difference was
 inconclusive (`-0.0157`, `p = 0.2877`), so GeoFormerX is presented as a
 parameter-efficient competitive alternative rather than an unqualified winner.
@@ -306,8 +313,42 @@ python evaluate.py \
   --device cuda:0
 ```
 
-The wrapper uses `256 x 256` tiles, stride 128, Hann-weighted logit averaging,
-horizontal-flip TTA, and a final eight-class argmax.
+The resolved command prints the canonical settings `--tta_hflip 1`,
+`--blend hann`, and `--stitch_mode logits` in the terminal. Each launch also
+writes `resolved_evaluation_protocol.json` to `out_dir`.
+
+## Canonical paper evaluation protocol
+
+For each `256 x 256` tile, the evaluator performs one forward pass on the
+original tile and one on its horizontal reflection. The reflected logits are
+flipped back and averaged 1:1 with the original logits. The seven fused
+foreground channels receive a fixed zero background channel to form the
+resulting eight-class logits. These logits are multiplied by a two-dimensional
+Hann window, accumulated over the three overlapping tile locations, and divided
+by the accumulated Hann weights. Argmax is applied only after complete-image
+logit reconstruction.
+
+- Tile size: 256
+- Stride: 128
+- Tiles per `512 x 256` image: 3
+- Horizontal-flip TTA: enabled
+- TTA merge: arithmetic mean after unflip
+- Blend: Hann
+- Stitch: logits
+- Decision: argmax after complete-image reconstruction
+
+See [docs/EVALUATION_PROTOCOL.md](docs/EVALUATION_PROTOCOL.md) for the equations,
+canonical versus noncanonical controls, and reproducibility-manifest fields.
+
+GeoFormerX complete-image latency is `106.6 ms/image` on one NVIDIA RTX 4090 D
+in FP32. The value includes intensity/range reading and preprocessing; three
+overlapping tiles; the original and horizontal-flip forward passes for each
+tile; inverse flipping and 1:1 logit fusion; Hann-weighted complete-image
+reconstruction; final argmax; and the CUDA synchronization immediately before
+timing ends. It excludes ground-truth reading, metric computation, and
+prediction-PNG saving. All 1,000 test images were included in the mean, with no
+first-image warm-up exclusion. This is software inference latency, not field
+end-to-end throughput.
 
 ## Class palette
 
@@ -343,7 +384,7 @@ mask color raises an error.
   intentionally excluded from Git; store them under `checkpoints/`,
   `data/pavement_rgbd/`, or `runs/`.
 - The auxiliary channel has no recovered physical unit, scale factor, or invalid
-  value convention and must not be interpreted as calibrated depth.
+  value convention and does not support physical depth measurement claims.
 - Road-section, route, date, campaign, and annotation-provenance metadata are not
   available, preventing verified group-based external validation.
 - The fixed-resolution tiling interface is not evidence of unrestricted
