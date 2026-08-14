@@ -5,14 +5,17 @@
 [![Model Card](https://img.shields.io/badge/model-card-informational)](MODEL_CARD.md)
 [![Citation](https://img.shields.io/badge/citation-CFF-lightgrey)](CITATION.cff)
 
-Official PyTorch release for **GeoFormerX: Parameter-efficient Segment Anything
-adaptation for automated pavement inspection with intensity-range imagery**.
+Official PyTorch release for **GeoFormerX: Parameter-efficient multimodal
+foundation-model adaptation for structured pavement condition information
+extraction**.
 
 GeoFormerX adapts a frozen SAM ViT-B encoder to paired grayscale-intensity and
 range-coded pavement rasters. The final `GeoFormerX-G8-D0-S0` model combines
 automatic full-tile prompting, G8 range-contribution gating, a single-path S0
 residual adapter in every ViT block, D0 seven-foreground-logit decoding, and
-overlap-aware reconstruction.
+horizontal-flip TTA with Hann-weighted reconstruction. Complete-image semantic
+maps are also exported as machine-readable class-presence and relative-coverage
+condition records.
 
 > The auxiliary raster is treated as coded input, not as metrically calibrated
 > depth. Results are limited to PaIR-Pave10K; no external-domain or physical
@@ -30,8 +33,12 @@ overlap-aware reconstruction.
   `[0, 0, 256, 256]` to every tile without manual or label-derived localization.
 - **One-pass eight-class output:** predicts seven foreground logits and prepends
   a fixed zero-valued background logit before loss, reconstruction, and argmax.
-- **Audited evaluation:** reports a frozen 1,000-image test, paired image-level
-  inference, three formal seeds, boundary metrics, and seam-region metrics.
+- **Structured condition information:** exports the semantic map together with
+  class-indexed pixel counts, presence fields, and dimensionless relative
+  coverage for all seven foreground classes.
+- **Audited evaluation:** reports a fixed-checkpoint 1,000-image test, paired
+  statistical analysis, three formal seeds, boundary metrics, and seam-region
+  metrics.
 
 ## Architecture
 
@@ -53,6 +60,7 @@ overlap-aware reconstruction.
     <tr><td align="center">Decoder</td><td align="center">Seven foreground logits + fixed zero background</td></tr>
     <tr><td align="center">Tiling</td><td align="center"><code>256 x 256</code>, stride <code>128</code>, three tiles per <code>512 x 256</code> image</td></tr>
     <tr><td align="center">Prompt</td><td align="center">Fixed full-tile box <code>[0, 0, 256, 256]</code></td></tr>
+    <tr><td align="center">Evaluation</td><td align="center">Horizontal-flip TTA; 1:1 logit mean after unflip; Hann-weighted logit reconstruction</td></tr>
     <tr><td align="center">Parameters</td><td align="center">92,073,368 total; 5,394,508 trainable</td></tr>
   </tbody>
 </table>
@@ -87,6 +95,37 @@ and `adaptation_pool`, each with 1,000 images.
 - `adaptation_pool`: reserved and unaccessed in the reported study.
 - `test`: opened read-only after architecture, checkpoints, baselines, and the
   statistical plan were frozen.
+
+## Structured condition-information output
+
+Every evaluated image produces an eight-class semantic map and a
+`GeoFormerX.condition_record.v1` record. For each foreground class, the record
+contains the valid-pixel count, a binary presence field, and relative coverage:
+
+\[
+r_{i,c}=\frac{\#\{x\in\Omega_i:\hat{y}_i(x)=c\}}{|\Omega_i|},
+\qquad c\in\{1,\ldots,7\}.
+\]
+
+Pixels marked with `ignore_index=255` are excluded from the valid domain
+`Omega_i`. Relative coverage is dimensionless and must not be interpreted as
+physical area, crack width, pothole depth, or damage volume.
+
+<div align="center">
+<table align="center">
+  <thead>
+    <tr><th align="center">Output</th><th align="center">Path</th><th align="center">Contents</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">Semantic labels</td><td align="center"><code>pred_label/&lt;image_id&gt;.png</code></td><td align="center">Eight-class label map</td></tr>
+    <tr><td align="center">Condition records</td><td align="center"><code>condition_records.json</code></td><td align="center">Nested class-indexed records with schema and model identity</td></tr>
+    <tr><td align="center">Tabular records</td><td align="center"><code>condition_records.csv</code></td><td align="center">One fixed-width row per image</td></tr>
+  </tbody>
+</table>
+</div>
+
+The implementation is in
+[`utils/condition_records.py`](utils/condition_records.py).
 
 ## Architecture selection
 
@@ -126,10 +165,15 @@ and `adaptation_pool`, each with 1,000 images.
 These two diagnostic figures report source-validation behavior only; they are
 not locked-test comparisons.
 
-## Frozen-test results
+## Final fixed-checkpoint test results under the revised protocol
 
-The primary paper comparison uses seed 2028 and the same 1,000 frozen test IDs
+The primary paper comparison uses seed 2028 and the same 1,000 fixed test IDs
 for all four methods.
+
+An earlier manuscript had reported results on an official test split. The
+public protocol therefore documents the fixed-checkpoint evaluation procedure
+used after the revised architecture and checkpoint-selection decisions had
+been completed.
 
 <div align="center">
 <table align="center">
@@ -145,7 +189,7 @@ for all four methods.
     </tr>
   </thead>
   <tbody>
-    <tr><td align="center"><strong>GeoFormerX</strong></td><td align="center">I + Q</td><td align="center"><strong>0.7605</strong></td><td align="center"><strong>0.6910</strong></td><td align="center"><strong>0.7889</strong></td><td align="center"><strong>0.7154</strong></td><td align="center"><strong>0.7659</strong></td></tr>
+    <tr><td align="center">GeoFormerX</td><td align="center">I + Q</td><td align="center">0.7605</td><td align="center">0.6910</td><td align="center">0.7889</td><td align="center">0.7154</td><td align="center">0.7659</td></tr>
     <tr><td align="center">FrozenSAM matched</td><td align="center">I only</td><td align="center">0.6920</td><td align="center">0.6464</td><td align="center">0.7289</td><td align="center">0.6273</td><td align="center">0.6927</td></tr>
     <tr><td align="center">SegFormer-B2</td><td align="center">I only</td><td align="center">0.7104</td><td align="center">0.6598</td><td align="center">0.7449</td><td align="center">0.6403</td><td align="center">0.7354</td></tr>
     <tr><td align="center">CMX</td><td align="center">I + Q</td><td align="center">0.7763</td><td align="center">0.7107</td><td align="center">0.8027</td><td align="center">0.7181</td><td align="center">0.7743</td></tr>
@@ -153,14 +197,32 @@ for all four methods.
 </table>
 </div>
 
-Paired image-level inference found practically meaningful improvements over
-matched intensity-only FrozenSAM (`+0.0685`, Holm-adjusted `p = 0.0003`) and
+Paired image-level statistical analysis found practically meaningful
+improvements over matched intensity-only FrozenSAM (`+0.0685`, Holm-adjusted
+`p = 0.0003`) and
 SegFormer-B2 (`+0.0502`, `p = 0.0014`). The GeoFormerX-CMX difference was
 inconclusive (`-0.0157`, `p = 0.2877`), so GeoFormerX is presented as a
 parameter-efficient competitive alternative rather than an unqualified winner.
 
 Across seeds 2026, 2027, and 2028, test foreground macro Dice was
 `0.7633 +/- 0.0053`.
+
+<div align="center">
+<table align="center">
+  <thead>
+    <tr><th align="center">Seed</th><th align="center">Best epoch</th><th align="center">Source-val FG mDice</th><th align="center">Test FG mDice</th><th align="center">Test mIoU</th><th align="center">Test macro F1</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">2026</td><td align="center">48</td><td align="center">0.7565</td><td align="center">0.7693</td><td align="center">0.7021</td><td align="center">0.7967</td></tr>
+    <tr><td align="center">2027</td><td align="center">25</td><td align="center">0.7547</td><td align="center">0.7599</td><td align="center">0.6936</td><td align="center">0.7884</td></tr>
+    <tr><td align="center">2028</td><td align="center">26</td><td align="center">0.7562</td><td align="center">0.7605</td><td align="center">0.6910</td><td align="center">0.7889</td></tr>
+    <tr><td align="center">Mean +/- SD</td><td align="center">-</td><td align="center">0.7558 +/- 0.0010</td><td align="center">0.7633 +/- 0.0053</td><td align="center">0.6956 +/- 0.0058</td><td align="center">0.7914 +/- 0.0046</td></tr>
+  </tbody>
+</table>
+</div>
+
+Seed 2028 remains the prespecified primary paper model; the seed was not chosen
+from test performance.
 
 ### Qualitative comparison
 
@@ -172,6 +234,26 @@ Across seeds 2026, 2027, and 2028, test foreground macro Dice was
 The displayed sample is deterministic position 600/1000, selected by an equally
 spaced ID rule rather than by performance.
 
+### Complete-image efficiency
+
+<div align="center">
+<table align="center">
+  <thead>
+    <tr><th align="center">Method</th><th align="center">Total M</th><th align="center">Trainable M (%)</th><th align="center">Latency ms/image</th><th align="center">Images/s</th><th align="center">Peak alloc. MB</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">GeoFormerX</td><td align="center">92.07</td><td align="center">5.39 (5.86%)</td><td align="center">106.6</td><td align="center">9.38</td><td align="center">522.6</td></tr>
+    <tr><td align="center">FrozenSAM matched</td><td align="center">92.07</td><td align="center">5.39 (5.86%)</td><td align="center">118.6</td><td align="center">8.43</td><td align="center">522.9</td></tr>
+    <tr><td align="center">SegFormer-B2</td><td align="center">27.35</td><td align="center">27.35 (100.00%)</td><td align="center">109.5</td><td align="center">9.13</td><td align="center">513.8</td></tr>
+    <tr><td align="center">CMX</td><td align="center">66.57</td><td align="center">66.57 (100.00%)</td><td align="center">139.5</td><td align="center">7.17</td><td align="center">546.9</td></tr>
+  </tbody>
+</table>
+</div>
+
+These FP32 measurements use one NVIDIA GeForce RTX 4090 D and include the full
+canonical TTA and reconstruction path described below. Optional diagnostic
+collection and foreground-probability export are outside the timed region.
+
 ## Release contents
 
 ```text
@@ -180,11 +262,12 @@ GeoFormer/
   configs/                 canonical G8-D0-S0 configuration
   data/                    intensity-range dataset reader and taxonomy
   docs/DATA_FORMAT.md      expected intensity, range, and mask layout
+  docs/TRAINING_PROTOCOL.md canonical optimization and active loss definition
   examples/                tiny synthetic smoke-test dataset
   model/geoformerx.py      G8 fusion, S0/M0/A0 adapters, and D0 model path
   scripts/                 demo and SAM-checkpoint utilities
   segment_anything/        minimal vendored SAM model-building subset
-  utils/                   losses, metrics, sampling, and publication outputs
+  utils/                   losses, metrics, condition records, sampling, and publication outputs
   train.py                 one-command canonical training wrapper
   evaluate.py              tiled locked-protocol evaluation wrapper
   MODEL_CARD.md
@@ -293,6 +376,10 @@ python train.py --dry_run
 The selected checkpoint is copied to `WORK_DIR/model_final.pth`. The canonical
 settings are also recorded in
 [configs/GeoFormerX_G8_D0_S0.yaml](configs/GeoFormerX_G8_D0_S0.yaml).
+The complete optimizer, sampling, and active loss definition--including the
+line-group CE over classes `[1, 5, 6]` at weight `0.10` and surface-group CE
+over `[2, 4]` at weight `0.05`--is documented in
+[docs/TRAINING_PROTOCOL.md](docs/TRAINING_PROTOCOL.md).
 
 ## Evaluation
 
@@ -306,8 +393,45 @@ python evaluate.py \
   --device cuda:0
 ```
 
-The wrapper uses `256 x 256` tiles, stride 128, Hann-weighted logit averaging,
-horizontal-flip TTA, and a final eight-class argmax.
+The resolved command prints the canonical settings `--tta_hflip 1`,
+`--blend hann`, `--stitch_mode logits`, and `--collect_debug 0` in the terminal.
+Each launch also writes `resolved_evaluation_protocol.json` to `out_dir`. In
+addition to color and label maps, evaluation writes `condition_records.json`
+and `condition_records.csv` with the structured condition-information fields.
+
+## Canonical paper evaluation protocol
+
+For each `256 x 256` tile, the evaluator performs one forward pass on the
+original tile and one on its horizontal reflection. The reflected logits are
+flipped back and averaged 1:1 with the original logits. The seven fused
+foreground channels receive a fixed zero background channel to form the
+resulting eight-class logits. These logits are multiplied by a two-dimensional
+Hann window, accumulated over the three overlapping tile locations, and divided
+by the accumulated Hann weights. Argmax is applied only after complete-image
+logit reconstruction.
+
+- Tile size: 256
+- Stride: 128
+- Tiles per `512 x 256` image: 3
+- Horizontal-flip TTA: enabled
+- TTA merge: arithmetic mean after unflip
+- Blend: Hann
+- Stitch: logits
+- Decision: argmax after complete-image reconstruction
+
+See [docs/EVALUATION_PROTOCOL.md](docs/EVALUATION_PROTOCOL.md) for the equations,
+canonical versus noncanonical controls, and reproducibility-manifest fields.
+
+GeoFormerX complete-image latency is `106.6 ms/image` on one NVIDIA RTX 4090 D
+in FP32. The value includes intensity/range reading and preprocessing; three
+overlapping tiles; the original and horizontal-flip forward passes for each
+tile; inverse flipping and 1:1 logit fusion; Hann-weighted complete-image
+reconstruction; final argmax; and the CUDA synchronization immediately before
+timing ends. It excludes ground-truth reading, metric computation,
+foreground-probability export, optional diagnostic collection, and
+prediction-PNG saving. All 1,000 test images were included in the mean, with no
+first-image warm-up exclusion. This is software inference latency, not field
+end-to-end throughput.
 
 ## Class palette
 
@@ -343,7 +467,7 @@ mask color raises an error.
   intentionally excluded from Git; store them under `checkpoints/`,
   `data/pavement_rgbd/`, or `runs/`.
 - The auxiliary channel has no recovered physical unit, scale factor, or invalid
-  value convention and must not be interpreted as calibrated depth.
+  value convention and does not support physical depth measurement claims.
 - Road-section, route, date, campaign, and annotation-provenance metadata are not
   available, preventing verified group-based external validation.
 - The fixed-resolution tiling interface is not evidence of unrestricted
@@ -355,9 +479,9 @@ mask color raises an error.
 
 ```bibtex
 @misc{bao2026geoformerx,
-  title  = {GeoFormerX: Parameter-efficient Segment Anything adaptation for
-            automated pavement inspection with intensity-range imagery},
-  author = {Bao, Longsheng and Chen, Si and Bao, Yuyang and Li, Baoxian and
+  title  = {GeoFormerX: Parameter-efficient multimodal foundation-model
+            adaptation for structured pavement condition information extraction},
+  author = {Bao, Longsheng and Chen, Si and Bao, Yuyang and Zhao, Zezheng and
             Zhao, Jiakang and Yu, Ling},
   year   = {2026},
   note   = {Manuscript and official PyTorch implementation}

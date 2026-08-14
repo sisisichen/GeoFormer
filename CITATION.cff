@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the GeoFormerX manuscript and repository."
-title: "GeoFormerX: Parameter-efficient Segment Anything adaptation for automated pavement inspection with intensity-range imagery"
-version: "1.0.0"
-date-released: "2026-08-07"
+title: "GeoFormerX: Parameter-efficient multimodal foundation-model adaptation for structured pavement condition information extraction"
+version: "1.1.0"
+date-released: "2026-08-14"
 type: software
 authors:
   - family-names: "Bao"
@@ -11,8 +11,8 @@ authors:
     given-names: "Si"
   - family-names: "Bao"
     given-names: "Yuyang"
-  - family-names: "Li"
-    given-names: "Baoxian"
+  - family-names: "Zhao"
+    given-names: "Zezheng"
   - family-names: "Zhao"
     given-names: "Jiakang"
   - family-names: "Yu"

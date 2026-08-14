@@ -141,6 +141,30 @@ def find_3d_path(image3d_root: str, split: str, image2d_name: str) -> str:
     )
 
 
+def load_grayscale_intensity(path: str) -> np.ndarray:
+    """Load one verified intensity channel as ``(H, W, 1)`` uint8.
+
+    PaIR-Pave10K stores some intensity rasters as one-channel files and others
+    as three-channel files whose channels are identical.  The canonical model
+    input is always one information channel; replication to SAM's three-channel
+    interface happens inside :class:`model.geoformerx.Fusion2D3D`.
+    """
+    with Image.open(path) as image:
+        if image.mode in {"1", "L", "I", "I;16", "F"}:
+            gray = np.asarray(image.convert("L"), dtype=np.uint8)
+        else:
+            rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+            if not (
+                np.array_equal(rgb[:, :, 0], rgb[:, :, 1])
+                and np.array_equal(rgb[:, :, 0], rgb[:, :, 2])
+            ):
+                raise ValueError(
+                    f"Intensity raster must contain one information channel (R=G=B): {path}"
+                )
+            gray = rgb[:, :, 0]
+    return gray[:, :, None]
+
+
 def rgb_to_label_nearest(mask_rgb: np.ndarray, dist_threshold: float, ignore_index: int) -> np.ndarray:
     """Decode the audited PaIR-Pave10K palette without nearest-color guessing.
 
@@ -641,7 +665,8 @@ class PavementMultiClassTileDB(Dataset):
         img3d_path = find_3d_path(self.threed_root, self.split, image_name)
         mask_path = os.path.join(self.label_dir, base + PAV_MASK_EXT)
 
-        rgb = np.array(Image.open(img2d_path).convert('RGB'), dtype=np.uint8)
+        intensity = load_grayscale_intensity(img2d_path)
+        rgb = np.repeat(intensity, 3, axis=2)
         d = np.array(Image.open(img3d_path).convert('L'), dtype=np.uint8)[:, :, None]
 
         if d.shape[0] != rgb.shape[0] or d.shape[1] != rgb.shape[1]:
@@ -649,21 +674,23 @@ class PavementMultiClassTileDB(Dataset):
             d_pil = d_pil.resize((rgb.shape[1], rgb.shape[0]), resample=Image.NEAREST)
             d = np.array(d_pil, dtype=np.uint8)[:, :, None]
 
-        img4_u8 = np.concatenate([rgb, d], axis=-1).astype(np.uint8, copy=False)
+        intensity_range_u8 = np.concatenate([intensity, d], axis=-1).astype(np.uint8, copy=False)
 
         mask_rgb = np.array(Image.open(mask_path).convert('RGB'), dtype=np.uint8)
         label = rgb_to_label_nearest(mask_rgb, PAV_DIST_THRESHOLD, PAV_IGNORE_INDEX).astype(np.uint8, copy=False)
 
-        self._cache.put(ck, (img4_u8, label, rgb))
-        return img4_u8, label, rgb
+        self._cache.put(ck, (intensity_range_u8, label, rgb))
+        return intensity_range_u8, label, rgb
 
     def __getitem__(self, index: int):
         image_name, x0, y0, orig_w, orig_h = self.samples[index]
 
-        img4, label_hw, _rgb_uint8 = self._load_triplet(image_name)
+        intensity_range, label_hw, _rgb_uint8 = self._load_triplet(image_name)
 
         # pad-to-multiple for tiling
-        img4_p, label_p = _pad_to_multiple(img4, label_hw, tile=self.tile_size)
+        intensity_range_p, label_p = _pad_to_multiple(
+            intensity_range, label_hw, tile=self.tile_size
+        )
 
         # -------------------------------------------------
         # Train-time crop augmentation
@@ -707,7 +734,7 @@ class PavementMultiClassTileDB(Dataset):
         x0 = int(np.clip(int(x0), 0, max_x0))
         y0 = int(np.clip(int(y0), 0, max_y0))
 
-        tile_img = img4_p[y0:y0 + ts, x0:x0 + ts, :]
+        tile_img = intensity_range_p[y0:y0 + ts, x0:x0 + ts, :]
         tile_lbl = label_p[y0:y0 + ts, x0:x0 + ts]
 
         tile_chw = tile_img.transpose(2, 0, 1).astype(np.float32, copy=False) / 255.0
@@ -780,14 +807,15 @@ class PavementFullImageDB(Dataset):
         img3d_path = find_3d_path(self.threed_root, self.split, image_name)
         mask_path = os.path.join(self.label_dir, base + PAV_MASK_EXT)
 
-        rgb = np.array(Image.open(img2d_path).convert("RGB"), dtype=np.uint8)
+        intensity = load_grayscale_intensity(img2d_path)
+        rgb = np.repeat(intensity, 3, axis=2)
         d = np.array(Image.open(img3d_path).convert("L"), dtype=np.uint8)[:, :, None]
         if d.shape[0] != rgb.shape[0] or d.shape[1] != rgb.shape[1]:
             d_pil = Image.fromarray(d.squeeze(-1))
             d_pil = d_pil.resize((rgb.shape[1], rgb.shape[0]), resample=Image.NEAREST)
             d = np.array(d_pil, dtype=np.uint8)[:, :, None]
 
-        img4 = np.concatenate([rgb, d], axis=-1).astype(np.float32) / 255.0
+        intensity_range = np.concatenate([intensity, d], axis=-1).astype(np.float32) / 255.0
 
         mask_rgb = np.array(Image.open(mask_path).convert("RGB"), dtype=np.uint8)
         label = rgb_to_label_nearest(mask_rgb, PAV_DIST_THRESHOLD, PAV_IGNORE_INDEX)
@@ -795,7 +823,8 @@ class PavementFullImageDB(Dataset):
         return {
             "name": image_name,
             "rgb": rgb,
-            "img4": img4,
+            "intensity_range": intensity_range,
+            "img4": intensity_range,
             "label": label,
             "orig_size": (int(rgb.shape[0]), int(rgb.shape[1])),
         }
