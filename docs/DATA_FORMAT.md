@@ -34,7 +34,10 @@ train/label/DL20001.bmp
 The intensity input contains one independent information channel. Single-channel
 files are loaded directly. Three-channel files must have identical `R`, `G`, and
 `B` values; the grayscale channel is replicated only when forming SAM's
-three-channel interface.
+three-channel interface. The formal loader therefore supplies a two-channel
+`[intensity, range]` tensor to GeoFormerX; the model performs intensity
+replication internally and retains a four-channel compatibility path only for
+older checkpoints and tools.
 
 ## Range-coded modality
 
@@ -48,16 +51,23 @@ verified before a formal run.
 
 ## Label palette
 
-| Class ID | Name | RGB |
-| ---: | --- | --- |
-| 0 | Background | `255, 255, 255` |
-| 1 | Crack | `255, 0, 0` |
-| 2 | Pothole | `0, 255, 0` |
-| 3 | Sealed Crack | `140, 40, 225` |
-| 4 | Patch | `0, 190, 255` |
-| 5 | Road Marking | `0, 0, 255` |
-| 6 | Expansion Joint | `140, 70, 0` |
-| 7 | Manhole Cover | `255, 100, 50` |
+<div align="center">
+<table align="center">
+  <thead>
+    <tr><th align="center">Class ID</th><th align="center">Name</th><th align="center">RGB</th></tr>
+  </thead>
+  <tbody>
+    <tr><td align="center">0</td><td align="center">Background</td><td align="center"><code>255, 255, 255</code></td></tr>
+    <tr><td align="center">1</td><td align="center">Crack</td><td align="center"><code>255, 0, 0</code></td></tr>
+    <tr><td align="center">2</td><td align="center">Pothole</td><td align="center"><code>0, 255, 0</code></td></tr>
+    <tr><td align="center">3</td><td align="center">Sealed Crack</td><td align="center"><code>140, 40, 225</code></td></tr>
+    <tr><td align="center">4</td><td align="center">Patch</td><td align="center"><code>0, 190, 255</code></td></tr>
+    <tr><td align="center">5</td><td align="center">Road Marking</td><td align="center"><code>0, 0, 255</code></td></tr>
+    <tr><td align="center">6</td><td align="center">Expansion Joint</td><td align="center"><code>140, 70, 0</code></td></tr>
+    <tr><td align="center">7</td><td align="center">Manhole Cover</td><td align="center"><code>255, 100, 50</code></td></tr>
+  </tbody>
+</table>
+</div>
 
 The audited extra color `#008C5A` maps to `IGNORE_INDEX = 255`. Any other
 undeclared color raises an error; nearest-color guessing is not used.

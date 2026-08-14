@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Evaluate pavement multi-class segmentation (2D+3D) with **one forward per tile**.
+"""Evaluate GeoFormerX with the canonical complete-image protocol.
 
 Key design
 ----------
 - Input images are 512x256 (W x H). We tile them online into 256x256.
 - The model outputs 7 foreground-class logits in one forward (classes 1..7).
-- We stitch tile predictions back to the original resolution, then fuse to an 8-class
-  label map (0 background + 7 defects) using softmax over [bg_logit(=0), fg_logits].
+- Canonical evaluation averages original and horizontal-flip logits, performs
+  Hann-weighted complete-image logit reconstruction, and then applies argmax.
 
 This script:
   1) loads the trained checkpoint (MoE GeoFormerX + 2D/3D fusion)
@@ -43,7 +43,7 @@ sam_model_checkpoint = {
 }
 
 
-from data.dataset import find_3d_path, rgb_to_label_nearest
+from data.dataset import find_3d_path, load_grayscale_intensity, rgb_to_label_nearest
 from data.dataset import PAV_DIST_THRESHOLD, PAV_IGNORE_INDEX
 
 from data.dataset import resolve_task_folder_meta
@@ -65,6 +65,11 @@ from utils.multiclass_metrics import (
 )
 
 from utils.multiclass_loss import logits_with_bg
+from utils.condition_records import (
+    CONDITION_RECORD_SCHEMA,
+    build_condition_record,
+    condition_record_csv_row,
+)
 from utils.publication_outputs import (
     count_parameters, error_overlay, foreground_mdice_from_cm, nanmean,
     plot_alpha_hist, plot_expert_heatmap, save_json, save_qual_panel,
@@ -177,7 +182,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--save_prob', type=int, default=0, choices=[0, 1])
     p.add_argument('--save_paper_outputs', type=int, default=1, choices=[0, 1],
                    help='1: save publication-oriented CSV/JSON metrics, overlays, panels, alpha histograms and expert heatmaps.')
-    p.add_argument('--collect_debug', type=int, default=1, choices=[0, 1],
+    p.add_argument('--collect_debug', type=int, default=0, choices=[0, 1],
                    help='1: collect fusion alpha and MoE routing probabilities during evaluation.')
     p.add_argument('--max_visuals', type=int, default=24,
                    help='Maximum number of qualitative panels saved for paper figures. 0 disables panels.')
@@ -189,6 +194,12 @@ def parse_args() -> argparse.Namespace:
                    help='logits: average logits before argmax; hard: argmax each tile then vote/average one-hot labels.')
     p.add_argument('--print_report', type=str, default='full', choices=['summary', 'report', 'full'],
                    help='What to print to the console at the end of evaluation.')
+    p.add_argument(
+        '--condition_record_model_id',
+        type=str,
+        default='GeoFormerX-G8-D0-S0',
+        help='Model/configuration identifier stored in machine-readable condition records.',
+    )
 
     p.add_argument(
         '--split',
@@ -213,21 +224,39 @@ def safe_tile_coords(h: int, w: int, tile: int, stride: int) -> List[Tuple[int, 
     return [(x, y) for y in ys for x in xs]
 
 
-def pad_to_multiple(img4: np.ndarray, label: np.ndarray, tile: int) -> Tuple[np.ndarray, np.ndarray]:
+def pad_to_multiple(
+    intensity_range: np.ndarray, label: np.ndarray, tile: int
+) -> Tuple[np.ndarray, np.ndarray]:
     """Pad H,W to multiples of tile."""
-    h, w = img4.shape[:2]
+    h, w = intensity_range.shape[:2]
     pad_h = (tile - (h % tile)) % tile
     pad_w = (tile - (w % tile)) % tile
     if pad_h == 0 and pad_w == 0:
-        return img4, label
+        return intensity_range, label
 
-    img4_p = np.pad(img4, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect')
+    intensity_range_p = np.pad(
+        intensity_range, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect'
+    )
     lbl_p = np.pad(label, ((0, pad_h), (0, pad_w)), mode='edge')
-    return img4_p, lbl_p
+    return intensity_range_p, lbl_p
 
 
 def full_box(tile: int) -> np.ndarray:
     return np.array([0, 0, tile, tile], dtype=np.float32)
+
+
+def load_reference_label(lbl_dir: Path, name: str) -> np.ndarray:
+    """Load one strict palette label for evaluation, outside canonical timing."""
+    gt_path = lbl_dir / f"{name}.bmp"
+    if not gt_path.exists():
+        gt_candidates = list(lbl_dir.glob(f"{name}.*"))
+        if len(gt_candidates) == 0:
+            raise FileNotFoundError(f'GT label not found for {name}')
+        gt_path = gt_candidates[0]
+    gt_rgb = np.array(Image.open(gt_path).convert('RGB'), dtype=np.uint8)
+    return rgb_to_label_nearest(
+        gt_rgb, dist_threshold=PAV_DIST_THRESHOLD, ignore_index=PAV_IGNORE_INDEX
+    )
 
 
 def hflip_boxes(boxes: torch.Tensor, tile: int) -> torch.Tensor:
@@ -420,7 +449,7 @@ def build_model(
 
 def infer_prob_maps_fg(
     model: torch.nn.Module,
-    img4: np.ndarray,
+    intensity_range: np.ndarray,
     label: np.ndarray,
     meta: Tuple[int, int, int, int, int],
     tile: int,
@@ -441,18 +470,19 @@ def infer_prob_maps_fg(
     collect_debug: bool = False,
     stitch_mode: str = 'logits',
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
-    """Return (pred_label, prob_fg, debug) for one image.
+    """Return ``(pred_label, reconstructed_logits, debug)`` for one image.
 
     - pred_label: (H,W) uint8 in {0..7} produced by argmax over 8-class logits
                  (bg logit is fixed to 0, fg logits are predicted).
-    - prob_fg   : (7,H,W) float32 softmax probability maps for foreground classes.
+    - reconstructed_logits: (8,H,W) float32 complete-image logits. Probability
+      maps are intentionally derived after the canonical latency timer stops.
 
     NOTE: We stitch by averaging **logits**, then apply argmax, to keep the
     evaluation prediction rule consistent with validation (argmax on logits).
     """
-    orig_h, orig_w = img4.shape[:2]
-    img4_p, label_p = pad_to_multiple(img4, label, tile=tile)
-    Hp, Wp = img4_p.shape[:2]
+    orig_h, orig_w = intensity_range.shape[:2]
+    intensity_range_p, label_p = pad_to_multiple(intensity_range, label, tile=tile)
+    Hp, Wp = intensity_range_p.shape[:2]
 
     coords = safe_tile_coords(Hp, Wp, tile=tile, stride=stride)
 
@@ -477,7 +507,7 @@ def infer_prob_maps_fg(
         names = []
 
         for (x0, y0) in batch_coords:
-            tile_img = img4_p[y0:y0 + tile, x0:x0 + tile, :]
+            tile_img = intensity_range_p[y0:y0 + tile, x0:x0 + tile, :]
             tile_lbl = label_p[y0:y0 + tile, x0:x0 + tile]
             imgs.append(tile_img.transpose(2, 0, 1))
 
@@ -654,22 +684,19 @@ def infer_prob_maps_fg(
     # --- prediction by argmax over 8-class logits ---
     pred = logits_acc.argmax(axis=0).astype(np.uint8)  # 0..7
 
-    # --- probabilities (for optional thresholding + saving) ---
-    m = logits_acc.max(axis=0, keepdims=True)
-    e = np.exp(logits_acc - m)
-    prob_all = e / (e.sum(axis=0, keepdims=True) + 1e-12)
-    prob_fg = prob_all[1:1 + NUM_FG_CLASSES]
-
-    if float(fg_thresh) > 0:
-        max_fg = prob_fg.max(axis=0)
-        pred = pred.copy()
-        pred[(pred != 0) & (max_fg < float(fg_thresh))] = 0
-
     # For visualization, force ignore pixels to background (metrics will ignore anyway)
     if label is not None:
         pred[label == int(PAV_IGNORE_INDEX)] = 0
 
-    return pred, prob_fg, debug
+    return pred, logits_acc, debug
+
+
+def foreground_probabilities_from_logits(logits_acc: np.ndarray) -> np.ndarray:
+    """Convert reconstructed logits to foreground probabilities outside timing."""
+    m = logits_acc.max(axis=0, keepdims=True)
+    e = np.exp(logits_acc - m)
+    prob_all = e / (e.sum(axis=0, keepdims=True) + 1e-12)
+    return prob_all[1:1 + NUM_FG_CLASSES]
 
 
 def _mean(x: np.ndarray) -> float:
@@ -785,14 +812,24 @@ def main() -> None:
 
     # Per-image logging
     rows: List[Dict[str, object]] = []
+    condition_records: List[Dict[str, object]] = []
+    condition_record_rows: List[Dict[str, object]] = []
     visual_names = {x.strip() for x in str(getattr(args, 'visual_names', '')).replace(';', ',').split(',') if x.strip()}
     max_visuals = int(getattr(args, 'max_visuals', 24))
     saved_visuals = 0
 
     for img_path in tqdm(img_files, desc='Infer+Eval'):
         name = img_path.stem
-        # 2D
-        img2d = np.array(Image.open(img_path).convert('RGB'), dtype=np.uint8)
+        # Canonical latency starts before intensity/range reading and
+        # preprocessing. Synchronize before starting so earlier CUDA work is
+        # not charged to this image.
+        if device.type == 'cuda':
+            torch.cuda.synchronize(device)
+        t0 = time.perf_counter()
+
+        # Grayscale intensity (one information channel)
+        intensity = load_grayscale_intensity(str(img_path))
+        img2d = np.repeat(intensity, 3, axis=2)
         h, w = img2d.shape[:2]
 
         # 3D path via mapping
@@ -801,26 +838,21 @@ def main() -> None:
         if img3d.shape[:2] != img2d.shape[:2]:
             img3d = np.array(Image.fromarray(img3d.squeeze(-1)).resize((w, h), resample=Image.NEAREST), dtype=np.uint8)[:, :, None]
 
-        img4 = np.concatenate([img2d, img3d], axis=-1).astype(np.float32) / 255.0
+        intensity_range = np.concatenate([intensity, img3d], axis=-1).astype(np.float32) / 255.0
 
-        # GT label
-        gt_path = lbl_dir / f"{name}.bmp"
-        if not gt_path.exists():
-            # try png
-            gt_candidates = list(lbl_dir.glob(f"{name}.*"))
-            if len(gt_candidates) == 0:
-                raise FileNotFoundError(f'GT label not found for {name}')
-            gt_path = gt_candidates[0]
+        # Canonical full-tile prompting does not need the reference label. The
+        # oracle-box debug mode is noncanonical and necessarily loads it here.
+        gt = None
+        if str(args.prompt_mode) == 'gt_box':
+            gt = load_reference_label(lbl_dir, name)
+            infer_label = gt
+        else:
+            infer_label = np.zeros((h, w), dtype=np.uint8)
 
-        gt_rgb = np.array(Image.open(gt_path).convert('RGB'), dtype=np.uint8)
-        gt = rgb_to_label_nearest(gt_rgb, dist_threshold=PAV_DIST_THRESHOLD, ignore_index=PAV_IGNORE_INDEX)
-
-        # Inference
-        t0 = time.time()
-        pred, prob_fg, debug = infer_prob_maps_fg(
+        pred, reconstructed_logits, debug = infer_prob_maps_fg(
             model=model,
-            img4=img4,
-            label=gt,
+            intensity_range=intensity_range,
+            label=infer_label,
             meta=meta,
             tile=int(args.tile_size),
             stride=int(args.tile_stride),
@@ -837,15 +869,41 @@ def main() -> None:
             class_ckpt_models=class_ckpt_models if len(class_ckpt_models) > 0 else None,
             class_ckpt_weight_map=class_ckpt_weight_map if len(class_ckpt_weight_map) > 0 else None,
             class_ckpt_fuse_mode=str(getattr(args, 'class_ckpt_fuse_mode', 'delta')),
-            collect_debug=bool(int(getattr(args, 'collect_debug', 1)) == 1),
+            collect_debug=bool(int(getattr(args, 'collect_debug', 0)) == 1),
             stitch_mode=str(getattr(args, 'stitch_mode', 'logits')),
         )
-        infer_times.append(time.time() - t0)
+        if device.type == 'cuda':
+            torch.cuda.synchronize(device)
+        infer_times.append(time.perf_counter() - t0)
+
+        # Reference-mask loading, ignore visualization, metrics, and file
+        # saving are intentionally outside the canonical latency scope.
+        prob_fg = foreground_probabilities_from_logits(reconstructed_logits)
+        if float(args.fg_thresh) > 0:
+            max_fg = prob_fg.max(axis=0)
+            pred = pred.copy()
+            pred[(pred != 0) & (max_fg < float(args.fg_thresh))] = 0
+        if gt is None:
+            gt = load_reference_label(lbl_dir, name)
+        pred = pred.copy()
+        pred[gt == int(PAV_IGNORE_INDEX)] = 0
 
         # Save (use .bmp for color masks to match your original labels)
         Image.fromarray(label_to_color(pred)).save(out_dir / 'pred_color' / f"{name}.bmp")
         Image.fromarray(pred.astype(np.uint8)).save(out_dir / 'pred_label' / f"{name}.png")
         Image.fromarray(label_to_color(gt.astype(np.uint8))).save(out_dir / 'gt_color' / f"{name}.bmp")
+
+        condition_record = build_condition_record(
+            prediction=pred,
+            image_id=name,
+            model_id=str(getattr(args, 'condition_record_model_id', 'GeoFormerX-G8-D0-S0')),
+            valid_mask=gt != int(PAV_IGNORE_INDEX),
+            semantic_map=f"pred_label/{name}.png",
+            checkpoint=Path(args.ckpt).name,
+            ignore_index=int(PAV_IGNORE_INDEX),
+        )
+        condition_records.append(condition_record)
+        condition_record_rows.append(condition_record_csv_row(condition_record))
 
         alpha_mean_img = float('nan')
         gate_mean_img = None
@@ -1018,7 +1076,10 @@ def main() -> None:
     report_lines.append(f"tile_size/stride     : {int(args.tile_size)}/{int(args.tile_stride)}")
     report_lines.append(f"prompt_mode          : {str(args.prompt_mode)}")
     report_lines.append(f"fg_thresh            : {float(args.fg_thresh)}")
+    report_lines.append(f"tta_hflip            : {int(getattr(args, 'tta_hflip', 0))}")
+    report_lines.append(f"blend                : {str(getattr(args, 'blend', 'none'))}")
     report_lines.append(f"stitch_mode          : {str(getattr(args, 'stitch_mode', 'logits'))}")
+    report_lines.append("timing_scope         : input/preprocess + tile forwards + reconstruction + argmax + CUDA sync")
     report_lines.append(f"trainable_params     : {int(param_info.get('trainable_params', 0))}")
     report_lines.append(f"trainable_ratio      : {float(param_info.get('trainable_ratio', 0.0)):.6f}")
     report_lines.append('-' * 88)
@@ -1058,7 +1119,17 @@ def main() -> None:
     for cid in range(8):
         per_class_rows.append({'class_id': cid, 'class_name': CLASS_NAMES[cid], 'Dice': float(per_total.dice[cid]), 'BoundaryF1': float(bnd_mean[cid]) if np.isfinite(bnd_mean[cid]) else '', 'SeamDice': (float(per_seam.dice[cid]) if per_seam is not None else ''), 'support': int(per_total.support[cid])})
     write_csv(out_dir / 'per_class_dice.csv', per_class_rows)
-    paper_metrics = {'split': split, 'n_images': len(img_files), 'mDice_fg': float(mdice_fg), 'CrackDice': float(crack_dice), 'BndF1_fg': float(bnd_f1_fg), 'SeamDice_fg': float(seam_mdice_fg), 'FPS': float(fps), 'avg_time_ms': float(avg_time * 1000.0), 'tile_size': int(args.tile_size), 'tile_stride': int(args.tile_stride), 'prompt_mode': str(args.prompt_mode), 'stitch_mode': str(getattr(args, 'stitch_mode', 'logits')), **param_info}
+    save_json(
+        out_dir / 'condition_records.json',
+        {
+            'schema': CONDITION_RECORD_SCHEMA,
+            'model_id': str(getattr(args, 'condition_record_model_id', 'GeoFormerX-G8-D0-S0')),
+            'checkpoint': Path(args.ckpt).name,
+            'records': condition_records,
+        },
+    )
+    write_csv(out_dir / 'condition_records.csv', condition_record_rows)
+    paper_metrics = {'split': split, 'n_images': len(img_files), 'mDice_fg': float(mdice_fg), 'CrackDice': float(crack_dice), 'BndF1_fg': float(bnd_f1_fg), 'SeamDice_fg': float(seam_mdice_fg), 'FPS': float(fps), 'avg_time_ms': float(avg_time * 1000.0), 'tile_size': int(args.tile_size), 'tile_stride': int(args.tile_stride), 'prompt_mode': str(args.prompt_mode), 'tta_hflip': bool(int(getattr(args, 'tta_hflip', 0)) == 1), 'blend': str(getattr(args, 'blend', 'none')), 'stitch_mode': str(getattr(args, 'stitch_mode', 'logits')), 'timing_scope': 'input_preprocess_tile_forwards_reconstruction_argmax_cuda_sync', **param_info}
     save_json(out_dir / 'paper_metrics.json', paper_metrics)
     write_csv(out_dir / 'paper_table.csv', [paper_metrics])
     (out_dir / 'deployment_speed.txt').write_text('\n'.join([f'{k}: {v}' for k, v in paper_metrics.items()]), encoding='utf-8')

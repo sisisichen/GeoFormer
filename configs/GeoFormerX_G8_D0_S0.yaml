@@ -1,5 +1,7 @@
 schema: GeoFormerX.canonical_config.v1
 model: GeoFormerX-G8-D0-S0
+paper_title: "GeoFormerX: Parameter-efficient multimodal foundation-model adaptation for structured pavement condition information extraction"
+manuscript_revision: "2026-08-14"
 
 architecture:
   backbone: SAM ViT-B
@@ -27,6 +29,9 @@ architecture:
 
 input:
   modalities: [grayscale_intensity, range_coded_raster]
+  loader_channels: 2
+  intensity_information_channels: 1
+  sam_interface_channels: 3
   image_size: [512, 256]
   tile_size: 256
   tile_stride: 128
@@ -39,6 +44,7 @@ optimizer:
   weight_decay: 0.01
   epochs: 50
   batch_size_tiles: 28
+  gradient_accumulation: 1
   precision: fp32
   gradient_clip_norm: 1.0
   schedule:
@@ -46,19 +52,90 @@ optimizer:
     warmup_epochs: 1
     hold_epochs: 32
     min_lr: 0.00001
+    decoder_min_lr: 0.0000025
   ema:
     enabled: true
     decay: 0.995
 
+loss:
+  eight_class_cross_entropy:
+    weight: 1.0
+    dynamic_inverse_frequency: true
+    class_weight_clamp: [0.2, 10.0]
+    background_scale: 0.55
+    ohem_fraction: 0.0625
+    ignore_index: 255
+  foreground_soft_dice:
+    weight: 1.0
+    present_only: true
+    class_weights:
+      1: 1.8
+      2: 1.5
+      3: 1.0
+      4: 1.1
+      5: 1.2
+      6: 1.3
+      7: 0.8
+  crack_sensitive:
+    focal_tversky: {weight: 0.12, alpha: 0.3, beta: 0.7, gamma: 0.75}
+    boundary_dice: {weight: 0.06, kernel: 3}
+    cldice: {weight: 0.012, iterations: 2}
+  other_rare_classes:
+    focal_tversky: {2: 0.06, 4: 0.03, 5: 0.03, 6: 0.04}
+    boundary_dice: {2: 0.02, 4: 0.02, 5: 0.02, 6: 0.02}
+    cldice: {5: 0.008, 6: 0.008}
+  group_restricted_cross_entropy:
+    line:
+      class_ids: [1, 5, 6]
+      class_names: [Crack, Road Marking, Expansion Joint]
+      local_target_order: {1: 0, 5: 1, 6: 2}
+      logits: direct_semantic_channel_selection
+      reduction: mean_over_subset_valid_pixels
+      empty_subset: differentiable_zero
+      weight: 0.10
+    surface:
+      class_ids: [2, 4]
+      class_names: [Pothole, Patch]
+      local_target_order: {2: 0, 4: 1}
+      logits: direct_semantic_channel_selection
+      reduction: mean_over_subset_valid_pixels
+      empty_subset: differentiable_zero
+      weight: 0.05
+
+sampling:
+  replacement_weighted: true
+  class_aware_focus_crop_probability: 0.65
+  stochastic_flip: false
+  stochastic_rotation: false
+  color_jitter: false
+
+data_use:
+  train: {images: 7000, purpose: model_fitting_and_architecture_screening}
+  source_val: {images: 1000, purpose: architecture_and_checkpoint_selection}
+  adaptation_pool: {images: 1000, purpose: reserved_unaccessed}
+  test: {images: 1000, purpose: final_fixed_checkpoint_evaluation}
+  validation_split_seed: 2026
+
 evaluation:
+  protocol: GeoFormerX_final_paper_evaluation_v1
   tta_horizontal_flip: true
   tta_merge: mean_1_to_1_after_unflip
   blend: hann
+  hann_1d_floor: 0.001
+  reconstruction_denominator_floor: 0.000001
   stitch: logits
+  collect_debug: false
+  decision: argmax_after_weight_normalized_complete_image_reconstruction
   selection_metric: foreground_macro_Dice
+
+outputs:
+  semantic_map: eight_class_label_map
+  condition_record_schema: GeoFormerX.condition_record.v1
+  condition_record_fields: [image_id, model_id, pixel_counts, presence, relative_coverage]
 
 parameters:
   total: 92073368
   trainable: 5394508
   frozen: 86678860
   trainable_ratio: 0.058589
+  trainable_tensors: 245

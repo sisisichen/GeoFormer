@@ -2,9 +2,10 @@
 
 ## Model summary
 
-GeoFormerX-G8-D0-S0 is a parameter-efficient SAM ViT-B adaptation for
-eight-class pavement-condition and surface-object segmentation from paired
-grayscale-intensity and range-coded rasters.
+GeoFormerX-G8-D0-S0 is a parameter-efficient multimodal SAM ViT-B adaptation
+for extracting structured pavement condition information from paired
+grayscale-intensity and range-coded rasters. It produces eight-class semantic
+maps and machine-readable, class-indexed condition records.
 
 The original SAM image and prompt encoders remain frozen. Trainable components
 are the G8 range-contribution module, one S0 static residual adapter in each of
@@ -57,7 +58,11 @@ GeoFormerX predicts seven foreground logit channels:
 7. Manhole Cover
 
 A fixed zero-valued background logit is prepended before loss computation,
-overlap-aware reconstruction, and the final eight-class argmax.
+overlap-aware reconstruction, and the final eight-class argmax. Evaluation also
+writes `condition_records.json` and `condition_records.csv`. Each record contains
+the image and model identifiers plus foreground-class pixel counts, presence,
+and dimensionless relative coverage over valid pixels. `ignore_index=255`
+pixels are excluded.
 
 ## Architecture and inference
 
@@ -68,9 +73,11 @@ overlap-aware reconstruction, and the final eight-class argmax.
 - No router, top-k operation, routing embedding, or expert branch in the final
   architecture.
 - Deterministic full-tile prompt `[0, 0, 256, 256]`.
-- Inference-time preprocessing reads paired intensity/range rasters, resizes a
-  mismatched range raster with nearest-neighbor resampling, concatenates the
-  channels, and scales 8-bit values by `1/255`.
+- Training and evaluation read exactly one verified intensity channel and one
+  range-coded channel. A mismatched range raster is resized with nearest-neighbor
+  resampling, the two channels are concatenated and scaled by `1/255`, and the
+  intensity channel is replicated to three channels only inside the model at
+  the SAM interface.
 - Three overlapping `256 x 256` tiles per `512 x 256` image, stride 128.
 - Horizontal-flip test-time augmentation: original and reflected predictions
   are restored to the same orientation and their logits are averaged 1:1.
@@ -81,7 +88,7 @@ overlap-aware reconstruction, and the final eight-class argmax.
 ## Training data and protocol
 
 PaIR-Pave10K contains 10,000 paired samples. The reported protocol uses 7,000
-`train`, 1,000 `source_val`, 1,000 reserved `adaptation_pool`, and 1,000 frozen
+`train`, 1,000 `source_val`, 1,000 reserved `adaptation_pool`, and 1,000 fixed
 `test` images. Architecture and checkpoint selection used only `train` and
 `source_val`; `adaptation_pool` was not accessed.
 
@@ -92,6 +99,12 @@ the revised architecture and checkpoint-selection decisions were complete.
 The private dataset and trained checkpoints are not distributed in this
 repository. The bundled miniature dataset is synthetic and intended only for
 software smoke testing.
+
+The active training objective uses eight-class dynamically weighted CE with
+OHEM, present-only foreground soft Dice, crack-sensitive and rare-class terms,
+line-group CE over Crack/Road Marking/Expansion Joint at weight 0.10, and
+surface-group CE over Pothole/Patch at weight 0.05. Exact definitions are in
+[docs/TRAINING_PROTOCOL.md](docs/TRAINING_PROTOCOL.md).
 
 ## Evaluation summary
 
@@ -110,7 +123,8 @@ in FP32. The mean includes intensity/range reading and preprocessing, the three
 overlapping tiles, original and horizontal-flip forwards, inverse flipping,
 1:1 TTA logit fusion, Hann-weighted reconstruction, final argmax, and a final
 CUDA synchronization. It excludes ground-truth reading, metric computation,
-and prediction-PNG saving. All 1,000 images were averaged without removing the
+foreground-probability export, optional diagnostic collection, and
+prediction-PNG saving. All 1,000 images were averaged without removing the
 first image as a warm-up. This is software inference latency rather than field
 end-to-end throughput.
 

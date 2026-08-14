@@ -17,6 +17,7 @@ from geoformerx_recipe import apply_ablation_variant, evaluation_args
 
 
 PROTOCOL_NAME = "GeoFormerX_final_paper_evaluation_v1"
+CONDITION_RECORD_SCHEMA = "GeoFormerX.condition_record.v1"
 PROTOCOL_FILENAME = "resolved_evaluation_protocol.json"
 REPO_ROOT = Path(__file__).resolve().parent
 EVALUATOR_PATH = REPO_ROOT / "_evaluate_core.py"
@@ -61,6 +62,8 @@ def is_canonical_evaluation(command: Sequence[str], ablation: str = "full") -> b
         _command_value(command, "--tta_hflip") == "1"
         and _command_value(command, "--blend") == "hann"
         and _command_value(command, "--stitch_mode") == "logits"
+        and _command_value(command, "--prompt_mode") == "full"
+        and _command_value(command, "--collect_debug") == "0"
         and str(ablation).lower().strip() == "full"
     )
 
@@ -81,7 +84,26 @@ def build_protocol_manifest(
         "tile_size": int(_command_value(command, "--tile_size") or 0),
         "tile_stride": int(_command_value(command, "--tile_stride") or 0),
         "tiles_per_512x256_image": 3,
+        "input_channels": "1_grayscale_intensity_plus_1_range_coded",
         "decision": "argmax_after_weight_normalized_reconstruction",
+        "condition_record_schema": CONDITION_RECORD_SCHEMA,
+        "condition_record_outputs": ["condition_records.json", "condition_records.csv"],
+        "diagnostic_collection": _command_value(command, "--collect_debug") == "1",
+        "timing_includes": [
+            "intensity_range_loading_and_preprocessing",
+            "three_original_and_three_horizontally_reflected_tile_forwards",
+            "inverse_flipping_and_equal_logit_merge",
+            "hann_weighted_complete_image_reconstruction",
+            "final_argmax",
+            "cuda_synchronization",
+        ],
+        "timing_excludes": [
+            "reference_mask_loading",
+            "metric_computation",
+            "prediction_saving",
+            "foreground_probability_export",
+            "optional_diagnostic_collection",
+        ],
         "canonical": canonical,
         "paper_reproduction_eligible": canonical,
         "ablation": args.ablation,
@@ -131,7 +153,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stitch_mode", default="logits", choices=["logits", "hard"], help="Use hard for the patch-mosaic stitching ablation.")
     p.add_argument("--save_paper_outputs", type=int, default=1, choices=[0, 1])
     p.add_argument("--max_visuals", type=int, default=24)
-    p.add_argument("--collect_debug", type=int, default=1, choices=[0, 1])
+    p.add_argument("--collect_debug", type=int, default=0, choices=[0, 1])
     p.add_argument("--dry_run", action="store_true", help="Print the resolved command without executing it.")
     return p.parse_args()
 
@@ -153,8 +175,9 @@ def main() -> None:
     cmd += [
         "--save_paper_outputs", str(int(args.save_paper_outputs)),
         "--max_visuals", str(int(args.max_visuals)),
-        "--collect_debug", str(int(args.collect_debug)),
     ]
+    collect_debug_idx = cmd.index("--collect_debug")
+    cmd[collect_debug_idx + 1] = str(int(args.collect_debug))
     stitch_idx = cmd.index("--stitch_mode")
     cmd[stitch_idx + 1] = str(args.stitch_mode)
     manifest_path = write_protocol_manifest(args, cmd)

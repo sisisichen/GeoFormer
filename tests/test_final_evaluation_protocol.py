@@ -60,6 +60,8 @@ def test_canonical_evaluation_command_contains_final_protocol() -> None:
     assert _value(command, "--tta_hflip") == "1"
     assert _value(command, "--blend") == "hann"
     assert _value(command, "--stitch_mode") == "logits"
+    assert _value(command, "--prompt_mode") == "full"
+    assert _value(command, "--collect_debug") == "0"
     assert _value(command, "--tile_size") == "256"
     assert _value(command, "--tile_stride") == "128"
 
@@ -106,6 +108,23 @@ def test_production_reconstructs_logits_before_complete_image_argmax() -> None:
     assert "default=-1.0" in EVALUATOR_SOURCE
 
 
+def test_canonical_timing_includes_input_loading_and_cuda_sync() -> None:
+    start = "t0 = time.perf_counter()"
+    intensity_load = "intensity = load_grayscale_intensity(str(img_path))"
+    inference = "pred, reconstructed_logits, debug = infer_prob_maps_fg("
+    synchronization = "torch.cuda.synchronize(device)"
+    stop = "infer_times.append(time.perf_counter() - t0)"
+    probability = "prob_fg = foreground_probabilities_from_logits(reconstructed_logits)"
+    reference_load = "if gt is None:\n            gt = load_reference_label(lbl_dir, name)"
+
+    start_index = EVALUATOR_SOURCE.index(start)
+    assert start_index < EVALUATOR_SOURCE.index(intensity_load, start_index)
+    assert start_index < EVALUATOR_SOURCE.index(inference, start_index)
+    assert EVALUATOR_SOURCE.rindex(synchronization) < EVALUATOR_SOURCE.index(stop, start_index)
+    assert EVALUATOR_SOURCE.index(stop, start_index) < EVALUATOR_SOURCE.index(probability)
+    assert EVALUATOR_SOURCE.index(stop, start_index) < EVALUATOR_SOURCE.index(reference_load)
+
+
 def test_protocol_manifest_is_complete_and_canonical(tmp_path: Path) -> None:
     checkpoint = tmp_path / "checkpoint.pt"
     checkpoint.write_bytes(b"synthetic checkpoint hash fixture")
@@ -138,7 +157,12 @@ def test_protocol_manifest_is_complete_and_canonical(tmp_path: Path) -> None:
     assert manifest["tile_size"] == 256
     assert manifest["tile_stride"] == 128
     assert manifest["tiles_per_512x256_image"] == 3
+    assert manifest["input_channels"] == "1_grayscale_intensity_plus_1_range_coded"
     assert manifest["decision"] == "argmax_after_weight_normalized_reconstruction"
+    assert manifest["condition_record_schema"] == "GeoFormerX.condition_record.v1"
+    assert manifest["diagnostic_collection"] is False
+    assert "cuda_synchronization" in manifest["timing_includes"]
+    assert "reference_mask_loading" in manifest["timing_excludes"]
     assert manifest["canonical"] is True
     assert manifest["evaluator_file_sha256"]
     assert manifest["config_sha256"]

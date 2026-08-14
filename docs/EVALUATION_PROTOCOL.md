@@ -59,7 +59,24 @@ The canonical prediction path does not apply a foreground threshold. Softmax
 probabilities are computed only after argmax for optional probability outputs
 and therefore do not affect the predicted class map.
 
-## 6. Timing scope
+## 6. Structured condition records
+
+For each image, the evaluator writes the semantic map and a
+`GeoFormerX.condition_record.v1` record. For foreground class `c`, the pixel
+count, presence field, and relative coverage are
+
+\[
+n_{i,c}=\sum_{x\in\Omega_i}\mathbf{1}[\hat y_i(x)=c],\qquad
+p_{i,c}=\mathbf{1}[n_{i,c}>0],\qquad
+r_{i,c}=\frac{n_{i,c}}{|\Omega_i|}.
+\]
+
+`Omega_i` contains valid pixels only; audited `ignore_index=255` pixels are
+excluded. The records are saved as `condition_records.json` and
+`condition_records.csv`. Relative coverage is dimensionless and is not a
+physical area or severity estimate.
+
+## 7. Timing scope
 
 GeoFormerX complete-image latency is `106.6 ms/image` on one NVIDIA RTX 4090 D
 in FP32. The mean includes intensity/range reading and preprocessing, all three
@@ -68,12 +85,14 @@ each tile, inverse flipping, 1:1 TTA logit fusion, Hann-weighted complete-image
 reconstruction, final argmax, and the CUDA synchronization immediately before
 the timer stops.
 
-The measurement excludes ground-truth reading, metric computation, and
-prediction-PNG saving. All 1,000 test images contribute to the mean; the first
-image was not removed as a warm-up. This is software inference latency, not a
-field end-to-end throughput measurement.
+The measurement excludes ground-truth reading, metric computation,
+foreground-probability export, optional diagnostic collection, and
+prediction-PNG saving. Canonical launches therefore use `--collect_debug 0`.
+All 1,000 test images contribute to the mean; the first image was not removed
+as a warm-up. This is software inference latency, not a field end-to-end
+throughput measurement.
 
-## 7. Canonical command
+## 8. Canonical command
 
 Run the public wrapper with the appropriate local data and checkpoint paths:
 
@@ -93,9 +112,10 @@ The resolved evaluator command must contain:
 --tta_hflip 1
 --blend hann
 --stitch_mode logits
+--collect_debug 0
 ```
 
-## 8. Canonical versus noncanonical settings
+## 9. Canonical versus noncanonical settings
 
 The canonical protocol requires horizontal-flip TTA, 1:1 logit fusion after
 unflipping, Hann blending, logit stitching, and the full G8-D0-S0 architecture.
@@ -104,7 +124,7 @@ available for controlled experiments. Such launches print
 `NONCANONICAL_EVALUATION_PROTOCOL` and must not be labeled as canonical paper
 reproductions.
 
-## 9. Reproducibility manifest
+## 10. Reproducibility manifest
 
 Every `evaluate.py` launch, including a dry run, writes
 `resolved_evaluation_protocol.json` to `out_dir`. It records the resolved

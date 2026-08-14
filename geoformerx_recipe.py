@@ -165,6 +165,7 @@ def evaluation_args(
         "--blend", "hann",
         "--prefer_ema", "1",
         "--stitch_mode", "logits",
+        "--collect_debug", "0",
         "--print_report", "full",
         "--device", device,
         "--device_ids", *[_s(i) for i in device_ids],
