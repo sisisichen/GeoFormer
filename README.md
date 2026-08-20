@@ -487,3 +487,9 @@ mask color raises an error.
   note   = {Manuscript and official PyTorch implementation}
 }
 ```
+
+## Journal Supplemental Material
+
+The supplemental material accompanying the GeoFormerX manuscript is available in the [`docs/supplemental`](./docs/supplemental) directory.
+
+An immutable archived version is available in the corresponding [GitHub Release](https://github.com/sisisichen/GeoFormer/releases/tag/jcice-supplement-v1.0).
